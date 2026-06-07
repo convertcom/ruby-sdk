@@ -7,6 +7,7 @@ module ConvertSdk
     @data_store_manager: DataStoreManager
     @event_manager: EventManager
     @data_manager: DataManager
+    @refresh_timer: BackgroundTimer
 
     attr_reader config: Config
     attr_reader data_manager: DataManager
@@ -26,7 +27,17 @@ module ConvertSdk
 
     def create_context: (*untyped) -> nil
 
+    def ensure_refresh_timer!: () -> self
+
+    def ensure_fresh_config!: () -> self
+
     private
+
+    def build_refresh_timer: () -> BackgroundTimer
+
+    def refresh_config: () -> void
+
+    def refetch_config: () -> Hash[String, untyped]?
 
     def bootstrap_config: () -> void
 

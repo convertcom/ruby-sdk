@@ -57,6 +57,17 @@ module ConvertSdk
       @data_store_manager = data_store_manager
       @event_manager = event_manager
       @data_manager = data_manager
+      # The lazily-started config-refresh BackgroundTimer (Story 2.7). Created
+      # here (interval bound, registered with ForkGuard) but NEVER started in the
+      # factory — #ensure_refresh_timer! starts it on first decision-path use
+      # (NFR4). A nil data_refresh_interval makes #start a guarded no-op (2.6),
+      # so timer-off mode never spawns a thread.
+      @refresh_timer = build_refresh_timer
+      # Wire the synchronous timer-off refresh callable into the DataManager so
+      # its decision-time TTL check (#ensure_fresh_config!) runs one full refresh
+      # cycle through the single HTTP port (the I/O happens under DataManager's
+      # thundering-herd fetch mutex, never the config mutex).
+      @data_manager.refetch = -> { refresh_config }
       bootstrap_config
     rescue StandardError => e
       # Construction must never crash the host: log and continue config-less.
@@ -99,7 +110,71 @@ module ConvertSdk
       nil
     end
 
+    # Lazily start the background config-refresh timer (NFR4 — never in the
+    # factory). Called at the first decision-path entry (consumed by 2.8/2.11);
+    # idempotent (2.6 {BackgroundTimer#start} is idempotent and re-arms after a
+    # fork). A nil +data_refresh_interval+ makes this a guarded no-op (no thread
+    # is ever created — timer-off mode). Never raises into the host.
+    # @return [self]
+    def ensure_refresh_timer!
+      @refresh_timer.start
+      self
+    rescue StandardError => e
+      @log_manager.error("Client#ensure_refresh_timer!: #{e.class}: #{e.message}")
+      self
+    end
+
+    # Decision-time freshness hook for timer-off mode (Lambda/CLI). Delegates to
+    # {DataManager#ensure_fresh_config!}, which performs an on-demand TTL check
+    # and a synchronous, thundering-herd-guarded refetch when the cached config
+    # is stale. A no-op when the refresh timer is enabled. Never raises.
+    # @return [self]
+    def ensure_fresh_config!
+      @data_manager.ensure_fresh_config!
+      self
+    rescue StandardError => e
+      @log_manager.error("Client#ensure_fresh_config!: #{e.class}: #{e.message}")
+      self
+    end
+
     private
+
+    # Build the config-refresh BackgroundTimer bound to +data_refresh_interval+
+    # and register it with ForkGuard (so a forked child marks it dead and the
+    # next #ensure_refresh_timer! re-arms it). The tick body is {#refresh_config}.
+    def build_refresh_timer
+      timer = BackgroundTimer.new(
+        interval: @config.data_refresh_interval,
+        log_manager: @log_manager,
+        name: "refresh"
+      ) { refresh_config }
+      ForkGuard.register_timer(timer)
+      timer
+    end
+
+    # One refresh cycle (the timer tick AND the synchronous timer-off refetch
+    # share this path): refetch through the HTTP port and, on success, install
+    # (deep-freeze + atomic swap + cache write via DataManager) which fires
+    # +config.updated+ (never +ready+ again — the 2.5 ready-once guard). A failed
+    # refetch keeps the current snapshot, warns, and lets the timer retry on the
+    # next tick (no inline retry, no backoff — frozen decision).
+    def refresh_config
+      envelope = refetch_config
+      if envelope.is_a?(Hash)
+        install(envelope, "Client#refresh_config: refreshed config installed")
+      else
+        @log_manager.warn("Client#refresh_config: refresh failed, serving cached config")
+      end
+    end
+
+    # Refetch the config through the single HTTP port and return the parsed
+    # envelope on success, or nil on any failed response. The single network
+    # refetch primitive — used by the timer tick and the timer-off synchronous
+    # refresh; the I/O here never holds the config mutex.
+    def refetch_config
+      response = @http_client.request(method: :get, url: config_url, headers: fetch_headers)
+      response.success? && response.body.is_a?(Hash) ? response.body : nil
+    end
 
     # Drive the config lifecycle at construction: direct-data install when a
     # +data:+ object was supplied, otherwise a live fetch. Either path that
@@ -113,11 +188,15 @@ module ConvertSdk
     end
 
     # Fetch config through the HTTP port and install it on success. A failed
-    # response degrades gracefully: a +warn+ line, no config, no raise.
+    # response degrades gracefully: it MAY fall back to a non-stale cached entry
+    # from the store (meaningful across processes with a shared store like
+    # Redis), otherwise a +warn+ line, no config, no raise.
     def fetch_and_install_config
       response = @http_client.request(method: :get, url: config_url, headers: fetch_headers)
       if response.success? && response.body.is_a?(Hash)
         install(response.body, "Client#initialize: installed fetched config")
+      elsif @data_manager.install_from_cache_if_fresh
+        @event_manager.fire(SystemEvents::READY, deferred: true)
       else
         @log_manager.warn(
           "Client#initialize: config fetch failed (status #{response.status}); " \
