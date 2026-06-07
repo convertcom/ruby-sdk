@@ -2,40 +2,55 @@
 
 require "spec_helper"
 
+# A thread-safe tick counter that signals waiters; the tick block bumps it and
+# specs wait on it with a bounded {TickCounter#wait_for} (no flaky sleeps).
+class TickCounter
+  def initialize
+    @mutex = Thread::Mutex.new
+    @cv = Thread::ConditionVariable.new
+    @count = 0
+  end
+
+  def bump
+    @mutex.synchronize do
+      @count += 1
+      @cv.signal
+    end
+  end
+
+  def value
+    @mutex.synchronize { @count }
+  end
+
+  # Block (bounded) until the count reaches +target+; true if reached.
+  def wait_for(target, timeout: 2.0)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+    @mutex.synchronize do
+      until @count >= target
+        remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        break if remaining <= 0
+
+        @cv.wait(@mutex, remaining)
+      end
+      @count >= target
+    end
+  end
+end
+
 RSpec.describe ConvertSdk::BackgroundTimer do
   let(:sink) { CapturingSink.new }
   # TRACE so debug-level thread-creation logs are captured.
   let(:log_manager) { ConvertSdk::LogManager.new(level: ConvertSdk::LogLevel::TRACE, sink: sink) }
 
-  # Build a timer whose tick pushes onto a thread-safe counter and signals a
-  # condition variable so specs can wait for N ticks with a BOUNDED wait rather
-  # than a flaky bare sleep.
+  # Build a timer whose tick bumps a thread-safe counter so specs can wait for
+  # N ticks with a BOUNDED wait rather than a flaky bare sleep.
   def counting_timer(interval: 0.02, name: "test", &on_tick)
-    ticks_mutex = Thread::Mutex.new
-    ticks_cv = Thread::ConditionVariable.new
-    ticks = 0
+    counter = TickCounter.new
     timer = described_class.new(interval: interval, log_manager: log_manager, name: name) do
       on_tick&.call
-      ticks_mutex.synchronize do
-        ticks += 1
-        ticks_cv.signal
-      end
+      counter.bump
     end
-    [timer, ticks_mutex, ticks_cv, -> { ticks_mutex.synchronize { ticks } }]
-  end
-
-  # Wait (bounded) until the tick count reaches +target+; returns true if reached.
-  def wait_for_ticks(mutex, cv, count_reader, target, timeout: 2.0)
-    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
-    mutex.synchronize do
-      until count_reader.call >= target
-        remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
-        break if remaining <= 0
-
-        cv.wait(mutex, remaining)
-      end
-    end
-    count_reader.call >= target
+    [timer, counter]
   end
 
   describe "#start / #stop idempotence" do
@@ -72,9 +87,9 @@ RSpec.describe ConvertSdk::BackgroundTimer do
 
   describe "tick firing" do
     it "fires the block repeatedly on its interval" do
-      timer, mutex, cv, count = counting_timer(interval: 0.02)
+      timer, counter = counting_timer(interval: 0.02)
       timer.start
-      expect(wait_for_ticks(mutex, cv, count, 3)).to be(true)
+      expect(counter.wait_for(3)).to be(true)
       timer.stop
     end
 
@@ -89,13 +104,13 @@ RSpec.describe ConvertSdk::BackgroundTimer do
   describe "never-crash tick" do
     it "logs a raising tick and keeps the loop alive for the next tick" do
       raised = 0
-      timer, mutex, cv, count = counting_timer(interval: 0.02) do
+      timer, counter = counting_timer(interval: 0.02) do
         raised += 1
         raise StandardError, "boom" if raised == 1
       end
       timer.start
       # Despite the first tick raising, subsequent ticks must still fire.
-      expect(wait_for_ticks(mutex, cv, count, 2)).to be(true)
+      expect(counter.wait_for(2)).to be(true)
       expect(timer.alive?).to be(true)
       timer.stop
       expect(sink.joined).to match(/BackgroundTimer#test: tick raised.*StandardError.*boom/)
@@ -112,6 +127,17 @@ RSpec.describe ConvertSdk::BackgroundTimer do
       timer.start
       expect(timer.alive?).to be(true)
       expect(timer.instance_variable_get(:@thread)).not_to be(original)
+      timer.stop
+    end
+  end
+
+  describe "no block supplied" do
+    it "ticks without raising when constructed without a block" do
+      timer = described_class.new(interval: 0.02, log_manager: log_manager, name: "noblock")
+      timer.start
+      # Give the loop time to tick at least once against an absent block.
+      sleep(0.05)
+      expect(timer.alive?).to be(true)
       timer.stop
     end
   end
