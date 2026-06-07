@@ -1,0 +1,44 @@
+module ConvertSdk
+  # The per-visitor public surface — the object an integrator holds for the
+  # lifetime of one request/job. Creation, attribute normalisation, property
+  # updates, and config/visitor-data lookups (Story 2.8); decisioning methods
+  # attach in later stories.
+  class Context
+    @visitor_id: String
+    @data_manager: DataManager
+    @data_store_manager: DataStoreManager
+    @event_manager: EventManager
+    @log_manager: LogManager
+    @config: Config
+    @attributes: Hash[String, untyped]
+
+    attr_reader visitor_id: String
+    attr_reader attributes: Hash[String, untyped]
+
+    def initialize: (
+      visitor_id: String,
+      data_manager: DataManager,
+      data_store_manager: DataStoreManager,
+      event_manager: EventManager,
+      log_manager: LogManager,
+      config: Config,
+      ?attributes: Hash[untyped, untyped]?
+    ) -> void
+
+    def update_visitor_properties: (Hash[untyped, untyped]? properties) -> self
+
+    def get_visitor_data: () -> Hash[String, untyped]
+
+    def get_config_entity: (String key, (String | Symbol) entity_type) -> Hash[String, untyped]?
+
+    private
+
+    def account_key: () -> String
+
+    def project_key: () -> String
+
+    def empty_store_data: () -> Hash[String, untyped]
+
+    def deep_stringify: (untyped node) -> untyped
+  end
+end

@@ -59,10 +59,20 @@ Metrics/ClassLength:
 # collaborator managers (config, log, http, data-store, event, data) — the
 # architecture mandates constructor injection throughout with no globals or
 # singletons, so each dependency is a named keyword argument rather than being
-# hidden inside an options bag. Six keyword params is the wiring contract, not a
-# smell; the default 5-param limit is raised by one to admit it.
+# hidden inside an options bag. The Context (Story 2.8) follows the same
+# injection contract and adds the two per-visitor values it binds (visitor_id +
+# attributes) on top of its five injected managers — seven keyword params is the
+# wiring contract, not a smell. The default 5-param limit is raised to admit it.
 Metrics/ParameterLists:
-  Max: 6
+  Max: 7
+
+# get_visitor_data / get_config_entity (Story 2.8) are FROZEN public-API parity
+# names mirroring the JS SDK surface (getVisitorData/getConfigEntity,
+# context.ts:495,549). The get_ prefix is mandated by the cross-SDK naming
+# contract, not an accessor-naming slip, so the cop is disabled for the Context.
+Naming/AccessorMethodName:
+  Exclude:
+    - "lib/convert_sdk/context.rb"
 
 # MurmurHash3 uses the canonical algorithm variable names from Austin Appleby's
 # reference implementation (h1 = hash state, k1 = block key). Renaming them would

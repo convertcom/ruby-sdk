@@ -133,14 +133,55 @@ RSpec.describe ConvertSdk::Client do
   end
 
   describe "public surface" do
-    it "exposes a create_context stub (full impl in Story 2.8)" do
-      client = create(data: { "data" => {} })
-      expect(client.create_context).to be_nil
-    end
-
     it "#on returns self for chaining and never raises on a bad listener" do
       client = create(data: { "data" => {} })
       expect(client.on("ready")).to be(client)
+    end
+  end
+
+  describe "#create_context (Story 2.8 — AC#1, AC#2)" do
+    let(:direct_data) { JSON.parse(File.read(File.expand_path("../fixtures/test-config.json", __dir__))) }
+
+    it "returns a Context bound to the visitor id and attributes" do
+      ctx = create(data: direct_data).create_context("visitor-9", country: "US")
+      expect(ctx).to be_a(ConvertSdk::Context)
+      expect(ctx.visitor_id).to eq("visitor-9")
+      expect(ctx.attributes).to eq({ "country" => "US" })
+    end
+
+    it "returns a NEW independent Context on each call (no caching, FR12)" do
+      client = create(data: direct_data)
+      a = client.create_context("v-a")
+      b = client.create_context("v-b")
+      expect(a).not_to be(b)
+      a.update_visitor_properties(plan: "pro")
+      expect(b.attributes).to eq({})
+    end
+
+    it "fires the lazy-start refresh-timer hook on context creation (first use)" do
+      client = create(data: direct_data)
+      allow(client).to receive(:ensure_refresh_timer!).and_call_original
+      client.create_context("visitor-9")
+      expect(client).to have_received(:ensure_refresh_timer!)
+    end
+
+    it "logs an error and returns nil for a nil visitor id (never-crash, not ArgumentError)" do
+      client = create(data: direct_data)
+      result = nil
+      expect { result = client.create_context(nil) }.not_to raise_error
+      expect(result).to be_nil
+    end
+
+    it "logs an error and returns nil for a blank visitor id" do
+      expect(create(data: direct_data).create_context("   ")).to be_nil
+    end
+
+    it "logs an error and returns nil when the lazy-start hook raises (never-crash)" do
+      client = create(data: direct_data)
+      allow(client).to receive(:ensure_refresh_timer!).and_raise(StandardError, "boom")
+      result = "unset"
+      expect { result = client.create_context("v") }.not_to raise_error
+      expect(result).to be_nil
     end
   end
 
