@@ -170,6 +170,16 @@ RSpec.describe ConvertSdk::ExperienceManager do
     end
   end
 
+  describe "nil visitor_properties gates the experience (JS parity)" do
+    # JS data-manager.ts:356-416: audiencesMatched defaults false and is only set
+    # inside `if (visitorProperties)`, so a nil bag is never eligible — even with
+    # no attached audiences. A present-but-empty {} bag is a different case.
+    it "returns NO_DATA_FOUND when visitor_properties is nil" do
+      result = experience_manager.select_variation(visitor, exp_key, { environment: "staging" })
+      expect(result).to be(ConvertSdk::RuleError::NO_DATA_FOUND)
+    end
+  end
+
   describe "empty locations / no site_area restriction (AC#4)" do
     it "treats an experience with no locations and no site_area as unrestricted" do
       cfg = stringify(ConfigFixture.config)
