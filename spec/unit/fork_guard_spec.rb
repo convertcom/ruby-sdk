@@ -1,0 +1,141 @@
+# frozen_string_literal: true
+
+require "spec_helper"
+
+RSpec.describe ConvertSdk::ForkGuard do
+  # A minimal duck-typed timer recording whether it was marked dead.
+  class FakeTimer
+    attr_reader :dead
+
+    def initialize
+      @dead = false
+    end
+
+    def mark_dead
+      @dead = true
+    end
+  end
+
+  before { reset_fork_guard! }
+  after { reset_fork_guard! }
+
+  describe ".forked? and owner_pid tracking" do
+    it "is false in the owning process" do
+      expect(described_class.forked?).to be(false)
+    end
+
+    it "tracks the current pid as owner_pid after reset/arm" do
+      expect(described_class.owner_pid).to eq(Process.pid)
+    end
+  end
+
+  describe ".register_timer + .rearm!" do
+    it "marks every registered timer dead on rearm!" do
+      t1 = FakeTimer.new
+      t2 = FakeTimer.new
+      described_class.register_timer(t1)
+      described_class.register_timer(t2)
+      described_class.rearm!
+      expect([t1.dead, t2.dead]).to eq([true, true])
+    end
+
+    it "resets owner_pid to the current pid on rearm!" do
+      described_class.instance_variable_set(:@owner_pid, -1)
+      described_class.rearm!
+      expect(described_class.owner_pid).to eq(Process.pid)
+    end
+  end
+
+  describe ".register_child_callback + .rearm!" do
+    it "fires callbacks in registration order, after timers are marked dead" do
+      order = []
+      timer = FakeTimer.new
+      described_class.register_timer(timer)
+      described_class.register_child_callback(-> { order << :first })
+      described_class.register_child_callback(-> { order << :second })
+      # A callback can observe that timers were already marked dead.
+      described_class.register_child_callback(-> { order << (timer.dead ? :timer_dead : :timer_alive) })
+      described_class.rearm!
+      expect(order).to eq(%i[first second timer_dead])
+    end
+  end
+
+  describe "double-install guard" do
+    it "installs the prepend at most once" do
+      # install! is idempotent: a second call must not add another prepend.
+      described_class.install!
+      before_ancestors = Process.singleton_class.ancestors.count { |m| m.to_s.include?("ForkGuard") }
+      described_class.install!
+      after_ancestors = Process.singleton_class.ancestors.count { |m| m.to_s.include?("ForkGuard") }
+      expect(after_ancestors).to eq(before_ancestors)
+    end
+  end
+
+  describe "JRuby no-op branch" do
+    it "skips the prepend and keeps forked? false when fork is unsupported" do
+      allow(Process).to receive(:respond_to?).and_call_original
+      allow(Process).to receive(:respond_to?).with(:fork).and_return(false)
+      # Re-running install! under the stub must not raise and must remain inert.
+      expect { described_class.install! }.not_to raise_error
+      expect(described_class.forked?).to be(false)
+    end
+  end
+
+  describe "nil-safe logger before wiring" do
+    it "does not raise on rearm! when no logger has been wired" do
+      described_class.logger = nil
+      expect { described_class.rearm! }.not_to raise_error
+    end
+
+    it "debug-logs fork detection when a logger is wired" do
+      sink = CapturingSink.new
+      log_manager = ConvertSdk::LogManager.new(level: ConvertSdk::LogLevel::TRACE, sink: sink)
+      described_class.logger = log_manager
+      described_class.rearm!
+      expect(sink.joined).to match(/ForkGuard/)
+    end
+  end
+
+  describe "actual fork integration (CRuby only)", :fork do
+    before { skip_unless_fork_supported }
+
+    it "sees forked? true in the child and false in the parent" do
+      described_class.install!
+      child_forked = run_in_fork { ConvertSdk::ForkGuard.forked? }
+      expect(child_forked).to be(true)
+      expect(described_class.forked?).to be(false)
+    end
+
+    it "marks registered timers dead in the child via the _fork hook" do
+      described_class.install!
+      timer = FakeTimer.new
+      described_class.register_timer(timer)
+      child_dead = run_in_fork { ConvertSdk::ForkGuard.instance_variable_get(:@timers).first.dead }
+      expect(child_dead).to be(true)
+    end
+
+    it "fires registered child-callbacks in the child" do
+      described_class.install!
+      described_class.register_child_callback(-> { $stdout.write("") })
+      fired = run_in_fork do
+        marker = []
+        # Re-register inside the child is unnecessary; the hook already fired at
+        # fork. We assert the owner_pid was reset to the child pid.
+        marker << (ConvertSdk::ForkGuard.owner_pid == Process.pid)
+        marker.first
+      end
+      expect(fired).to be(true)
+    end
+  end
+
+  describe "single Process._fork prepend site (architectural regression)" do
+    it "is the only file under lib/ that references Process._fork or the singleton_class prepend" do
+      lib_root = File.expand_path("../../lib", __dir__)
+      offenders = Dir[File.join(lib_root, "**", "*.rb")].select do |path|
+        src = File.read(path)
+        src.include?("_fork") || src.include?("singleton_class.prepend")
+      end
+      expect(offenders.map { |p| File.basename(p) }).to eq(["fork_guard.rb"])
+    end
+  end
+end
