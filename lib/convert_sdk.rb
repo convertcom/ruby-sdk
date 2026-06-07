@@ -23,6 +23,7 @@ require_relative "convert_sdk/event_manager"
 require_relative "convert_sdk/fork_guard"
 require_relative "convert_sdk/background_timer"
 require_relative "convert_sdk/data_manager"
+require_relative "convert_sdk/context"
 require_relative "convert_sdk/client"
 
 # Install the SDK's only global mutation — the Process._fork prepend — at load
