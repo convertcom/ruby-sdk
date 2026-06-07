@@ -207,7 +207,7 @@ RSpec.describe ConvertSdk::Context do
 
     it "returns a frozen BucketedVariation for an eligible visitor" do
       result = ctx(attributes: matching.merge("environment" => "staging"))
-                .run_experience(exp_key)
+               .run_experience(exp_key)
       expect(result).to be_a(ConvertSdk::BucketedVariation)
       expect(variation_ids).to include(result.id)
     end

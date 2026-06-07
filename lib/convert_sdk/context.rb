@@ -181,8 +181,11 @@ module ConvertSdk
     #   over the context attributes (deep-stringified).
     # @return [BucketedVariation, Sentinel] a frozen variation or a sentinel miss.
     def run_experience(key, attributes = nil)
+      manager = @experience_manager
+      return RuleError::NO_DATA_FOUND if manager.nil?
+
       @data_manager.ensure_fresh_config!
-      variation = @experience_manager.select_variation(@visitor_id, key, decision_attributes(attributes))
+      variation = manager.select_variation(@visitor_id, key, decision_attributes(attributes))
       fire_bucketing(key, variation) unless variation.is_a?(Sentinel)
       variation
     rescue StandardError => e
@@ -206,8 +209,11 @@ module ConvertSdk
     #   over the context attributes (deep-stringified).
     # @return [Array<BucketedVariation>] the frozen variations (misses excluded).
     def run_experiences(attributes = nil)
+      manager = @experience_manager
+      return [] if manager.nil?
+
       @data_manager.ensure_fresh_config!
-      variations = @experience_manager.select_variations(@visitor_id, decision_attributes(attributes))
+      variations = manager.select_variations(@visitor_id, decision_attributes(attributes))
       variations.each { |variation| fire_bucketing(variation.experience_key, variation) }
       variations
     rescue StandardError => e
