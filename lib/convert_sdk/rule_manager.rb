@@ -68,8 +68,8 @@ module ConvertSdk
     # @return [Boolean, Sentinel] true/false, or a {RuleError} sentinel propagated
     #   from a leaf.
     def is_rule_matched(data, rule_set, log_entry = nil)
-      or_groups = rule_set.is_a?(Hash) ? rule_set["OR"] : nil
-      unless or_groups.is_a?(Array) && !or_groups.empty?
+      or_groups = nonempty_block(rule_set, "OR")
+      unless or_groups
         warn_rule_not_valid("RuleManager#is_rule_matched", log_entry)
         return false
       end
@@ -91,8 +91,8 @@ module ConvertSdk
     # AND block: every OR_WHEN leaf-list must return true. Returns the first
     # non-true result (false or a sentinel short-circuits). rule-manager.ts:191-220.
     def process_and(data, and_group)
-      leaves = and_group.is_a?(Hash) ? and_group["AND"] : nil
-      unless leaves.is_a?(Array) && !leaves.empty?
+      leaves = nonempty_block(and_group, "AND")
+      unless leaves
         warn_rule_not_valid("RuleManager#process_and")
         return false
       end
@@ -108,8 +108,8 @@ module ConvertSdk
     # OR_WHEN block: the first matching leaf wins. After the loop, returns the
     # last result unless false (so a sentinel propagates). rule-manager.ts:229-255.
     def process_or_when(data, or_when)
-      leaves = or_when.is_a?(Hash) ? or_when["OR_WHEN"] : nil
-      unless leaves.is_a?(Array) && !leaves.empty?
+      leaves = nonempty_block(or_when, "OR_WHEN")
+      unless leaves
         warn_rule_not_valid("RuleManager#process_or_when")
         return false
       end
@@ -211,6 +211,19 @@ module ConvertSdk
     # Mirrors the JS CookieMatchingOptions.EXISTS / DOES_NOT_EXIST special-case.
     def existence_operator?(match_type)
       %w[exists doesNotExist].include?(match_type)
+    end
+
+    # Extract +container[key]+ as a non-empty Array, or +nil+ when the container
+    # is not a Hash, the key is missing, the value is not an Array, or the Array
+    # is empty. The single source of the FR22 "empty/missing block" predicate —
+    # every empty/missing OR/AND/OR_WHEN shape collapses to +nil+ here.
+    def nonempty_block(container, key)
+      return nil unless container.is_a?(Hash)
+
+      value = container[key]
+      return nil unless value.is_a?(Array) && !value.empty?
+
+      value
     end
 
     # Emit a RULE_NOT_VALID warn (FR22 exclusion signal) — rule-manager.ts warn
