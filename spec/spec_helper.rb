@@ -13,9 +13,10 @@ if COVERAGE_ENABLED
 
   # Per-group line+branch floor for the critical algorithm units. SimpleCov
   # 0.22 has no first-class per-group minimum API, so we enforce it ourselves
-  # in an at_exit hook. The groups reference files that land in later stories
-  # (murmur_hash3.rb in 1.2, bucketing_manager.rb in 2.9, etc.) — the gate is
-  # inert until a group actually has tracked files, then activates automatically.
+  # in a top-level at_exit hook. The groups reference files that land in later
+  # stories (murmur_hash3.rb in 1.2, bucketing_manager.rb in 2.9, etc.) — the
+  # gate is inert until a group actually has tracked files, then activates
+  # automatically.
   CRITICAL_GROUPS = {
     "Hashing" => ["lib/convert_sdk/murmur_hash3.rb"],
     "Bucketing" => ["lib/convert_sdk/bucketing_manager.rb"],
@@ -23,24 +24,15 @@ if COVERAGE_ENABLED
   }.freeze
   CRITICAL_GROUP_MINIMUM = 95.0
 
-  SimpleCov.start do
-    enable_coverage :branch
-
-    add_filter %r{^/spec/}
-    add_filter %r{^/bin/}
-
-    # Pinned coverage groups (architecture: SimpleCov group membership pinned).
-    add_group "Hashing", "lib/convert_sdk/murmur_hash3.rb"
-    add_group "Bucketing", "lib/convert_sdk/bucketing_manager.rb"
-    add_group "Rules", ["lib/convert_sdk/rule_manager.rb", "lib/convert_sdk/comparisons.rb"]
-
-    # Global build-failing line gate — active from day one.
-    minimum_coverage line: 85
-
-    # Critical-group line+branch floor (>=95%). Inert until the group's files exist.
-    at_exit do
-      SimpleCov.result.format!
-
+  # Register the per-group gate as a TOP-LEVEL at_exit BEFORE SimpleCov.start.
+  # Ruby runs at_exit hooks LIFO, so this fires AFTER SimpleCov's own exit hook
+  # (which formats the report and enforces the global `minimum_coverage line: 85`
+  # build-failing gate). We must NOT pass a custom block to `SimpleCov.start`'s
+  # own `at_exit`, because doing so replaces SimpleCov's default exit hook and
+  # silently disables the global minimum_coverage enforcement.
+  at_exit do
+    # Only run when SimpleCov produced a result for this process.
+    if SimpleCov.running == false && SimpleCov.result?
       failures = []
       result_files = SimpleCov.result.files
       CRITICAL_GROUPS.each do |group_name, members|
@@ -63,11 +55,27 @@ if COVERAGE_ENABLED
       end
 
       unless failures.empty?
-        warn "SimpleCov critical-group coverage gate FAILED:"
+        warn "SimpleCov critical-group coverage gate FAILED (>= #{CRITICAL_GROUP_MINIMUM}% line+branch):"
         failures.each { |f| warn "  #{f}" }
         exit 1
       end
     end
+  end
+
+  SimpleCov.start do
+    enable_coverage :branch
+
+    add_filter %r{^/spec/}
+    add_filter %r{^/bin/}
+
+    # Pinned coverage groups (architecture: SimpleCov group membership pinned).
+    add_group "Hashing", "lib/convert_sdk/murmur_hash3.rb"
+    add_group "Bucketing", "lib/convert_sdk/bucketing_manager.rb"
+    add_group "Rules", ["lib/convert_sdk/rule_manager.rb", "lib/convert_sdk/comparisons.rb"]
+
+    # Global build-failing line gate — active from day one. Enforced by
+    # SimpleCov's own at_exit hook (left intact above).
+    minimum_coverage line: 85
   end
 end
 
