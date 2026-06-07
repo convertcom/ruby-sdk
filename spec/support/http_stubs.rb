@@ -22,7 +22,8 @@ module HttpStubs
   TRACK_HOST = "https://track.example.test"
 
   # A captured wire request: the immutable facts a spec asserts against.
-  CapturedRequest = Struct.new(:method, :uri, :headers, :body, keyword_init: true)
+  # +http_method+ (not +method+) avoids overriding +Object#method+.
+  CapturedRequest = Struct.new(:http_method, :uri, :headers, :body, keyword_init: true)
 
   # Every request observed through {#capture_with}. A fresh array per example
   # (RSpec re-includes the module and runs +before+ resets via {#reset_http_capture}).
@@ -42,7 +43,7 @@ module HttpStubs
   def capture
     proc do |request|
       captured_requests << CapturedRequest.new(
-        method: request.method,
+        http_method: request.method,
         uri: request.uri.to_s,
         headers: request.headers || {},
         body: request.body
