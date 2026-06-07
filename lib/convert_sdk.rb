@@ -9,6 +9,8 @@ require_relative "convert_sdk/enums/feature_status"
 require_relative "convert_sdk/enums/log_level"
 require_relative "convert_sdk/enums/system_events"
 require_relative "convert_sdk/enums/goal_data_key"
+require_relative "convert_sdk/bucketed_variation"
+require_relative "convert_sdk/bucketed_feature"
 
 module ConvertSdk
   class Error < StandardError; end

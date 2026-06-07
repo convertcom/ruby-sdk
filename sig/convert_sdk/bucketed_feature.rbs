@@ -1,0 +1,17 @@
+module ConvertSdk
+  # A successfully resolved feature — a frozen Struct value object.
+  class BucketedFeature < Struct[untyped]
+    attr_reader experience_id: String?
+    attr_reader experience_key: String?
+    attr_reader experience_name: String?
+    attr_reader id: String?
+    attr_reader key: String?
+    attr_reader name: String?
+    attr_reader status: String?
+    attr_reader variables: Hash[untyped, untyped]?
+
+    def initialize: (**untyped) -> void
+
+    def error?: () -> bool
+  end
+end

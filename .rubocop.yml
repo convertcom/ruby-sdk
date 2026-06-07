@@ -45,3 +45,15 @@ Naming/MethodParameterName:
   AllowedNames:
     - h1
     - k1
+
+# The frozen value objects (BucketedVariation, BucketedFeature) are declared as
+# explicit `class X < Struct.new(...)` subclasses. This is the form the
+# architecture mandates ("frozen Struct subclass") AND the only form Steep can
+# statically resolve: methods defined in a `Struct.new(...) do ... end` block are
+# mis-attributed by Steep to the enclosing module (Ruby::UndeclaredMethodDefinition),
+# whereas the subclass form attributes #error?/#initialize to the class as the RBS
+# declares. The Style/StructInheritance preference is overridden here for that reason.
+Style/StructInheritance:
+  Exclude:
+    - "lib/convert_sdk/bucketed_variation.rb"
+    - "lib/convert_sdk/bucketed_feature.rb"
