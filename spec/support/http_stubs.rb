@@ -89,6 +89,30 @@ module HttpStubs
     { "experiences" => {}, "audiences" => {}, "_meta" => { "ok" => true } }
   end
 
+  # The vendored realistic config envelope (Story 1.2's +test-config.json+),
+  # parsed to a string-keyed Hash. This is the actual wire shape the Client
+  # installs and the DataManager readers are derived from — use it whenever a
+  # spec needs a config fetch to return a representative project config.
+  #
+  # @return [Hash{String=>Object}] the parsed +test-config.json+ envelope.
+  def vendored_config
+    JSON.parse(File.read(File.expand_path("../fixtures/test-config.json", __dir__)))
+  end
+
+  # Stub +GET {CONFIG_HOST}/config/{sdk_key}+ serving the vendored realistic
+  # config envelope (Story 2.5 Client fetch path). The +environment+ query
+  # parameter, when the Client appends one, still matches (WebMock matches the
+  # path; the capture block records the full URI for assertions).
+  #
+  # @param sdk_key [String] the SDK key path segment.
+  # @param status [Integer] HTTP status to return (default 200).
+  # @return [WebMock::RequestStub]
+  def stub_vendored_config(sdk_key: "sdk-key-1", status: 200)
+    stub_request(:get, %r{\A#{Regexp.escape(CONFIG_HOST)}/config/#{Regexp.escape(sdk_key)}(\?.*)?\z})
+      .with(&capture)
+      .to_return(status: status, body: JSON.generate(vendored_config), headers: json_headers)
+  end
+
   # A canned minimal track-ack payload.
   def canned_ack
     { "status" => "queued", "received" => 1 }
