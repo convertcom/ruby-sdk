@@ -86,9 +86,13 @@ module ConvertSdk
     # @return [String, nil] the selected variation id, or +nil+.
     def select_bucket(buckets, value, redistribute = 0)
       variation = nil
-      prev = 0
+      # Float accumulator: JS does `prev += buckets[id]*100 + redistribute` in
+      # IEEE-754 double arithmetic (bm.ts:68). Ruby Float is the same double, so
+      # accumulating in Float mirrors JS exactly. value (Integer) < prev (Float)
+      # compares identically to the JS strict upper-bound check.
+      prev = 0.0
       buckets.each do |id, percentage|
-        prev += (percentage * 100) + redistribute
+        prev += (percentage.to_f * 100) + redistribute
         if value < prev
           variation = id
           break
