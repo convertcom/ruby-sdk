@@ -36,6 +36,13 @@ ConvertSdk::ForkGuard.install!
 # {ConvertSdk.create} is THE public entry point (frozen API name): it builds the
 # validated {Config}, wires the managers, and returns a ready-to-use {Client}.
 module ConvertSdk
+  # The default config-cache TTL in seconds, used by the timer-off (Lambda/CLI)
+  # decision-time staleness check when +data_refresh_interval+ is +nil+
+  # (timer-off ≠ TTL-off). 300s converges on the same cadence the background
+  # timer uses, on demand. A Ruby-SDK design constant (PHP on-demand TTL
+  # semantics) — the JS SDK has no timer-off TTL concept. See Story 2.7.
+  DEFAULT_CONFIG_TTL = 300
+
   # The SDK's base error type. Note the SDK has NO custom exception hierarchy for
   # runtime/infra failures (Decision 3 — it degrades gracefully with cached
   # config / sentinels); misconfiguration surfaces as a plain +ArgumentError+
