@@ -25,6 +25,13 @@ Style/StringLiteralsInInterpolation:
 Layout/LineLength:
   Max: 120
 
+# RBS inline type annotations (`#: Type`) are deliberately written without a
+# space after `#` — that exact form is what Steep parses. The hardened HTTP
+# port (Story 1.5) uses them to type empty-literal seams (`{} #: Hash[...]`)
+# at the single Net::HTTP site. Allow the RBS-inline form for this cop.
+Layout/LeadingCommentSpace:
+  AllowRBSInlineAnnotation: true
+
 # Specs use long descriptive blocks; the default 25-line block limit is noise
 # for RSpec example groups and the SimpleCov config block in spec_helper.
 Metrics/BlockLength:
@@ -57,3 +64,4 @@ Style/StructInheritance:
   Exclude:
     - "lib/convert_sdk/bucketed_variation.rb"
     - "lib/convert_sdk/bucketed_feature.rb"
+    - "lib/convert_sdk/http_client.rb"
