@@ -13,11 +13,12 @@ RSpec.describe ConvertSdk::Stores::RedisStore do
   it_behaves_like "a convert store"
 
   describe "client injection (AC#1)" do
-    it "uses the injected client without constructing a new one" do
-      # The lazy require + Redis.new only happen on the connection-options path.
-      # On the injection path they must NEVER run — that is what keeps the suite
-      # green with `redis` uninstalled. Assert the private builder is not called.
-      expect_any_instance_of(described_class).not_to receive(:build_client)
+    it "uses the injected client without lazily requiring redis" do
+      # The lazy `require "redis"` + `Redis.new` only happen on the
+      # connection-options path. On the injection path they must NEVER run —
+      # that is what keeps the suite green with `redis` uninstalled. Asserting
+      # `require "redis"` is never invoked proves the gem is not touched.
+      expect_any_instance_of(described_class).not_to receive(:require)
       described_class.new(redis: client)
     end
 
@@ -28,11 +29,23 @@ RSpec.describe ConvertSdk::Stores::RedisStore do
   end
 
   describe "connection options (AC#1)" do
-    it "builds a client from options via the lazy require" do
-      built = FakeRedis.new
-      allow_any_instance_of(described_class)
-        .to receive(:build_client).with({ url: "redis://localhost:6379" }).and_return(built)
+    # Exercise the REAL `build_client`: stub the lazy `require "redis"` to a
+    # no-op (so the suite needs no `redis` gem) and supply a stand-in `Redis`
+    # constant whose `.new` returns the in-memory fake. This drives both the
+    # `require "redis"` line and `Redis.new(**options)` without a live Redis.
+    before do
+      stub_const("Redis", fake_redis_class)
+      allow_any_instance_of(described_class).to receive(:require).with("redis").and_return(false)
+    end
 
+    let(:built) { FakeRedis.new }
+
+    let(:fake_redis_class) do
+      stand_in = built
+      Class.new { define_singleton_method(:new) { |**_opts| stand_in } }
+    end
+
+    it "lazily requires redis and builds a client from connection options" do
       adapter = described_class.new(url: "redis://localhost:6379")
       adapter.set("k", "v")
       expect(built.get("convert:k")).to eq(JSON.generate("v"))

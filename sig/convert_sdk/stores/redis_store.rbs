@@ -1,3 +1,12 @@
+# Minimal declaration of the lazily-required `redis` gem's `Redis` class — ONLY
+# the `Redis.new` singleton the adapter calls. Declared here (not pulled from the
+# `redis` gem's RBS) so Steep can resolve the constant without `redis` being a
+# dependency: the SDK has ZERO runtime deps and `redis` is the user's gem. Returns
+# the structural `_RedisLike` the adapter types against.
+class Redis
+  def self.new: (**untyped options) -> ConvertSdk::Stores::RedisStore::_RedisLike
+end
+
 module ConvertSdk
   module Stores
     # A first-party, in-tree store adapter backed by Redis.
