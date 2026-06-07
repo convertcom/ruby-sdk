@@ -87,7 +87,7 @@ WebMock.disable_net_connect!(allow_localhost: false)
 require "convert_sdk"
 
 # Load shared support files (test doubles, helpers) before configuring RSpec.
-Dir[File.join(__dir__, "support", "**", "*.rb")].sort.each { |file| require file }
+Dir[File.join(__dir__, "support", "**", "*.rb")].each { |file| require file }
 
 RSpec.configure do |config|
   # Enable flags like --only-failures and --next-failure
