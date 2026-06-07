@@ -11,6 +11,7 @@ module ConvertSdk
     @log_manager: LogManager
     @config: Config
     @attributes: Hash[String, untyped]
+    @experience_manager: ExperienceManager?
 
     attr_reader visitor_id: String
     attr_reader attributes: Hash[String, untyped]
@@ -22,7 +23,8 @@ module ConvertSdk
       event_manager: EventManager,
       log_manager: LogManager,
       config: Config,
-      ?attributes: Hash[untyped, untyped]?
+      ?attributes: Hash[untyped, untyped]?,
+      ?experience_manager: ExperienceManager?
     ) -> void
 
     def update_visitor_properties: (Hash[untyped, untyped]? properties) -> self
@@ -31,7 +33,15 @@ module ConvertSdk
 
     def get_config_entity: (String key, (String | Symbol) entity_type) -> Hash[String, untyped]?
 
+    def run_experience: (String key, ?Hash[untyped, untyped]? attributes) -> (BucketedVariation | Sentinel)
+
+    def run_experiences: (?Hash[untyped, untyped]? attributes) -> Array[BucketedVariation]
+
     private
+
+    def decision_attributes: (Hash[untyped, untyped]? per_call) -> Hash[Symbol, untyped]
+
+    def fire_bucketing: (untyped experience_key, BucketedVariation variation) -> void
 
     def account_key: () -> String
 

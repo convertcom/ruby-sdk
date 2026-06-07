@@ -374,7 +374,7 @@ module ConvertSdk
     # gates passed AND it has variations; otherwise a reason-logged nil.
     def eligible_for_variation(experience, gates_passed)
       return reason_miss(experience, "audience not match") unless gates_passed
-      return reason_miss(experience, "variations not found") if Array(experience["variations"]).empty?
+      return reason_miss(experience, "variations not found") if variation_list(experience).empty?
 
       @log_manager&.debug("DataManager#match_rules_by_field: rules matched id=#{experience["id"]}")
       experience
@@ -421,16 +421,16 @@ module ConvertSdk
       experience_id = experience["id"].to_s
       buckets = build_buckets(experience)
       decision = @bucketing_manager&.bucket_for_visitor(buckets, visitor_id, experience_id: experience_id)
-      variation = decision && retrieve_variation(experience, decision[:variation_id])
+      variation_id = decision&.fetch(:variation_id, nil)
+      variation = variation_id && retrieve_variation(experience, variation_id)
       if variation.nil?
         @log_manager&.debug("DataManager#retrieve_bucketing: unable to select bucket exp=#{experience_id}")
         return BucketingError::VARIATION_NOT_DECIDED
       end
 
-      variation_id = decision[:variation_id]
       persist_bucketing(visitor_id, experience_id, variation_id, attributes)
       @log_manager&.debug("DataManager#retrieve_bucketing: bucketed exp=#{experience_id} var=#{variation_id}")
-      build_bucketed_variation(experience, variation, decision[:bucketing_allocation])
+      build_bucketed_variation(experience, variation, decision&.fetch(:bucketing_allocation, nil))
     end
 
     # True when +experience.id+ is in the archived-experiences list (to_s match).
@@ -565,7 +565,7 @@ module ConvertSdk
     # data-manager.ts:417-440 + filterMatchedCustomSegments.
     def custom_segments_matched?(experience, visitor_id)
       audience_ids = experience["audiences"]
-      segs = audience_ids.is_a?(Array) ? items_by_ids(audience_ids, segments) : []
+      segs = audience_ids.is_a?(Array) ? items_by_ids(audience_ids, segments) : [] #: Array[Hash[String, untyped]]
       if segs.empty?
         @log_manager&.info("DataManager#custom_segments_matched?: segmentation not restricted")
         return true
@@ -593,13 +593,21 @@ module ConvertSdk
     # variations with positive (or absent -> 100) traffic allocation only. Mirrors
     # JS data-manager.ts:622-637.
     def build_buckets(experience)
-      buckets = {} #: Hash[String, Numeric]
-      Array(experience["variations"]).each do |variation|
+      buckets = {} #: Hash[String, (Integer | Float)]
+      variation_list(experience).each do |variation|
         next unless bucketable_variation?(variation)
 
         buckets[variation["id"]] = variation["traffic_allocation"] || 100.0
       end
       buckets
+    end
+
+    # The experience's variations as a typed array (untyped elements), or [].
+    # Centralizes the +Array(experience["variations"])+ coercion so Steep sees a
+    # concrete element type (avoiding a +bot+ block parameter).
+    def variation_list(experience)
+      list = experience["variations"]
+      list.is_a?(Array) ? list : []
     end
 
     # A variation is bucketable when it is a Hash with an id, is running (or has
@@ -646,7 +654,7 @@ module ConvertSdk
     # Resolve a variation Hash by id within an experience's variations, or nil.
     def retrieve_variation(experience, variation_id)
       target = variation_id.to_s
-      Array(experience["variations"]).find do |variation|
+      variation_list(experience).find do |variation|
         variation.is_a?(Hash) && variation["id"].to_s == target
       end
     end
@@ -671,7 +679,9 @@ module ConvertSdk
     # Select the entities in +list+ whose +id+ is in +ids+ (to_s match). Mirrors
     # JS getItemsByIds (data-manager.ts:1339-1359).
     def items_by_ids(ids, list)
-      wanted = Array(ids).map(&:to_s)
+      return [] unless ids.is_a?(Array)
+
+      wanted = ids.map(&:to_s)
       list.select { |entity| entity.is_a?(Hash) && wanted.include?(entity["id"].to_s) }
     end
 
