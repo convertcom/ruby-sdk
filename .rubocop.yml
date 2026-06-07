@@ -1,5 +1,18 @@
+plugins:
+  - rubocop-performance
+
 AllCops:
-  TargetRubyVersion: 2.6
+  TargetRubyVersion: 3.1
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - "bin/**/*"
+    - "vendor/**/*"
+
+# Every .rb file MUST start with the frozen-string-literal magic comment.
+Style/FrozenStringLiteralComment:
+  Enabled: true
+  EnforcedStyle: always
 
 Style/StringLiterals:
   Enabled: true
@@ -11,3 +24,15 @@ Style/StringLiteralsInInterpolation:
 
 Layout/LineLength:
   Max: 120
+
+# Specs use long descriptive blocks; the default 25-line block limit is noise
+# for RSpec example groups and the SimpleCov config block in spec_helper.
+Metrics/BlockLength:
+  Exclude:
+    - "spec/**/*"
+    - "*.gemspec"
+    - "Rakefile"
+    - "spec/spec_helper.rb"
+
+Metrics/MethodLength:
+  Max: 20
