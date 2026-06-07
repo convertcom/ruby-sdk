@@ -123,8 +123,10 @@ module ConvertSdk
     # Look up a config entity by key and type from the installed config snapshot.
     #
     # +entity_type+ names the collection — +:experience+ / +:feature+ / +:goal+
-    # (a string or symbol; case-insensitive) — and dispatches to the matching
-    # {DataManager} by-key reader. A miss (unknown key OR unknown type) returns
+    # (accepted as a symbol or a string; the value is matched verbatim after
+    # +to_s+, so it must be one of those three lowercase names) — and dispatches
+    # to the matching {DataManager} by-key reader. A miss (unknown key OR
+    # unknown/unmatched type) returns
     # +nil+ and emits a +debug+ line
     # (+Context#get_config_entity: no {type} found for key={key}+) — never a
     # raise. (JS +getConfigEntity+ — +context.ts:495+ — returns +undefined+
