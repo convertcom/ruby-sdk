@@ -12,6 +12,7 @@ require_relative "convert_sdk/enums/goal_data_key"
 require_relative "convert_sdk/bucketed_variation"
 require_relative "convert_sdk/bucketed_feature"
 require_relative "convert_sdk/redactor"
+require_relative "convert_sdk/log_manager"
 
 module ConvertSdk
   class Error < StandardError; end
