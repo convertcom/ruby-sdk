@@ -1,0 +1,32 @@
+module ConvertSdk
+  module Stores
+    # A first-party, in-tree store adapter backed by Redis.
+    class RedisStore
+      # Minimal structural type for the redis-rb client subset this adapter
+      # uses. Declared here so Steep need not depend on the `redis` gem's RBS
+      # (the gem is lazily required and is not a dependency).
+      interface _RedisLike
+        def get: (String key) -> String?
+
+        def set: (String key, String value) -> untyped
+      end
+
+      DEFAULT_KEY_PREFIX: String
+
+      @key_prefix: String
+      @client: _RedisLike
+
+      def initialize: (?redis: _RedisLike?, ?key_prefix: String, **untyped options) -> void
+
+      def get: (String key) -> untyped
+
+      def set: (String key, untyped value) -> untyped
+
+      private
+
+      def build_client: (Hash[Symbol, untyped] options) -> _RedisLike
+
+      def namespaced: (String key) -> String
+    end
+  end
+end
