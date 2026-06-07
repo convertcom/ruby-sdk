@@ -20,8 +20,16 @@ require_relative "convert_sdk/stores/memory_store"
 require_relative "convert_sdk/stores/redis_store"
 require_relative "convert_sdk/data_store_manager"
 require_relative "convert_sdk/event_manager"
+require_relative "convert_sdk/fork_guard"
+require_relative "convert_sdk/background_timer"
 require_relative "convert_sdk/data_manager"
 require_relative "convert_sdk/client"
+
+# Install the SDK's only global mutation — the Process._fork prepend — at load
+# (it must exist before any fork; installing it is cheap and thread-free, so it
+# respects the NFR4 zero-threads-until-use rule, which concerns THREADS, not the
+# hook). A no-op on JRuby by construction.
+ConvertSdk::ForkGuard.install!
 
 # The Convert Experiences full-stack SDK for Ruby.
 #

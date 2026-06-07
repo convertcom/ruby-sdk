@@ -1,21 +1,22 @@
 # frozen_string_literal: true
 
 require "spec_helper"
+require "tmpdir"
 
-RSpec.describe ConvertSdk::ForkGuard do
-  # A minimal duck-typed timer recording whether it was marked dead.
-  class FakeTimer
-    attr_reader :dead
+# A minimal duck-typed timer recording whether it was marked dead.
+class FakeTimer
+  attr_reader :dead
 
-    def initialize
-      @dead = false
-    end
-
-    def mark_dead
-      @dead = true
-    end
+  def initialize
+    @dead = false
   end
 
+  def mark_dead
+    @dead = true
+  end
+end
+
+RSpec.describe ConvertSdk::ForkGuard do
   before { reset_fork_guard! }
   after { reset_fork_guard! }
 
@@ -99,41 +100,54 @@ RSpec.describe ConvertSdk::ForkGuard do
   describe "actual fork integration (CRuby only)", :fork do
     before { skip_unless_fork_supported }
 
-    it "sees forked? true in the child and false in the parent" do
+    # The _fork hook fires automatically in the child and runs the shared
+    # re-arm path: it resets owner_pid to the child's pid (so the child is now
+    # the owner — forked? is correctly false afterward, there is nothing left to
+    # re-arm), marks registered timers dead, and fires child-callbacks. The
+    # parent is unaffected. We assert these EFFECTS — owner_pid reset is the
+    # observable proof the hook ran in the child.
+
+    it "resets owner_pid to the child pid via the _fork hook, leaving the parent unaffected" do
       described_class.install!
-      child_forked = run_in_fork { ConvertSdk::ForkGuard.forked? }
-      expect(child_forked).to be(true)
+      parent_pid = Process.pid
+      child_owner_matches = run_in_fork do
+        # owner_pid was reset by the hook to this child's pid.
+        ConvertSdk::ForkGuard.owner_pid == Process.pid && Process.pid != parent_pid
+      end
+      expect(child_owner_matches).to be(true)
+      # Parent still owns its own threads; it did not fork-detect itself.
       expect(described_class.forked?).to be(false)
+      expect(described_class.owner_pid).to eq(parent_pid)
     end
 
     it "marks registered timers dead in the child via the _fork hook" do
       described_class.install!
-      timer = FakeTimer.new
-      described_class.register_timer(timer)
+      described_class.register_timer(FakeTimer.new)
       child_dead = run_in_fork { ConvertSdk::ForkGuard.instance_variable_get(:@timers).first.dead }
       expect(child_dead).to be(true)
     end
 
-    it "fires registered child-callbacks in the child" do
+    it "fires registered child-callbacks in the child via the _fork hook" do
       described_class.install!
-      described_class.register_child_callback(-> { $stdout.write("") })
-      fired = run_in_fork do
-        marker = []
-        # Re-register inside the child is unnecessary; the hook already fired at
-        # fork. We assert the owner_pid was reset to the child pid.
-        marker << (ConvertSdk::ForkGuard.owner_pid == Process.pid)
-        marker.first
-      end
-      expect(fired).to be(true)
+      # The callback writes a sentinel to a file the parent reads back.
+      tmp = "#{Dir.tmpdir}/forkguard_cb_#{Process.pid}_#{rand(10_000)}"
+      described_class.register_child_callback(-> { File.write(tmp, "fired") })
+      run_in_fork { :done }
+      expect(File.exist?(tmp)).to be(true)
+      expect(File.read(tmp)).to eq("fired")
+    ensure
+      File.delete(tmp) if tmp && File.exist?(tmp)
     end
   end
 
   describe "single Process._fork prepend site (architectural regression)" do
-    it "is the only file under lib/ that references Process._fork or the singleton_class prepend" do
+    it "is the only file under lib/ that defines _fork or prepends onto the singleton class" do
       lib_root = File.expand_path("../../lib", __dir__)
       offenders = Dir[File.join(lib_root, "**", "*.rb")].select do |path|
         src = File.read(path)
-        src.include?("_fork") || src.include?("singleton_class.prepend")
+        # The actual global mutation (singleton_class.prepend) and the hook
+        # definition (def _fork) — not comment prose mentioning "_fork".
+        src.include?("singleton_class.prepend") || src.match?(/^\s*def _fork\b/)
       end
       expect(offenders.map { |p| File.basename(p) }).to eq(["fork_guard.rb"])
     end

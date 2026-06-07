@@ -31,21 +31,9 @@ module ForkHelpers
   #
   # @yield runs in the forked child process.
   # @return [Object] the block's return value, transported from the child.
-  def run_in_fork
+  def run_in_fork(&block)
     reader, writer = IO.pipe
-    pid = fork do
-      reader.close
-      payload =
-        begin
-          { value: yield }
-        rescue StandardError => e
-          { error: "#{e.class}: #{e.message}" }
-        end
-      writer.write(Marshal.dump(payload))
-      writer.close
-      # Hard-exit the child without running at_exit hooks / RSpec teardown.
-      exit!(0)
-    end
+    pid = fork { run_fork_child(reader, writer, &block) }
     writer.close
     raw = reader.read
     reader.close
@@ -54,6 +42,21 @@ module ForkHelpers
     raise "child raised #{payload[:error]}" if payload.key?(:error)
 
     payload[:value]
+  end
+
+  # Runs in the forked child: evaluate the block, ship the result down the pipe,
+  # then hard-exit (skipping at_exit hooks / RSpec teardown).
+  def run_fork_child(reader, writer)
+    reader.close
+    payload =
+      begin
+        { value: yield }
+      rescue StandardError => e
+        { error: "#{e.class}: #{e.message}" }
+      end
+    writer.write(Marshal.dump(payload))
+    writer.close
+    exit!(0)
   end
 
   # Reset {ConvertSdk::ForkGuard} singleton state so specs are order-independent.
