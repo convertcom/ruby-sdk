@@ -135,6 +135,37 @@ RSpec.describe "ConvertSdk::Client config refresh (Story 2.7)" do
       client.ensure_refresh_timer!
       expect(refresh_timer(client).alive?).to be(false)
     end
+
+    # One real-loop integration example (the rest drive #refresh_config directly):
+    # a short-interval timer must actually tick and swap config on its own thread.
+    it "ticks on its own thread and swaps config when started (real loop)" do
+      stub_request(:get, %r{/config/sdk-key-1})
+        .to_return(status: 200, body: JSON.generate(vendored_config), headers: json_headers).then
+        .to_return(status: 200, body: JSON.generate(updated_config), headers: json_headers)
+      client = create(sdk_key: "sdk-key-1", data_refresh_interval: 0.02)
+      mutex = Thread::Mutex.new
+      cv = Thread::ConditionVariable.new
+      fired = false
+      client.on(ConvertSdk::SystemEvents::CONFIG_UPDATED) do
+        mutex.synchronize do
+          fired = true
+          cv.signal
+        end
+      end
+      client.ensure_refresh_timer!
+      # Bounded wait for one real tick on the timer thread (no Timeout, no sleep).
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2.0
+      mutex.synchronize do
+        until fired
+          remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          break if remaining <= 0
+
+          cv.wait(mutex, remaining)
+        end
+      end
+      stop_timer(client)
+      expect(client.data_manager.account_id).to eq("ACCT-2")
+    end
   end
 
   describe "Task 3 — lazy-TTL fallback, timer-off mode (AC#3)" do
