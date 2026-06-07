@@ -1,0 +1,14 @@
+module ConvertSdk
+  # A frozen singleton sentinel — the SDK's public contract for a business miss.
+  class Sentinel
+    @wire_string: String
+
+    def initialize: (String wire_string) -> void
+
+    def to_s: () -> String
+
+    def key: () -> nil
+
+    def error?: () -> bool
+  end
+end
