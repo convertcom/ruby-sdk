@@ -507,7 +507,13 @@ module ConvertSdk
     # audience to match; otherwise any match suffices. Returns true/false or a
     # propagated {RuleError} sentinel. Mirrors JS data-manager.ts:350-416.
     def match_audiences(experience, visitor_properties, is_bucketed)
-      return true unless visitor_properties
+      # JS parity (data-manager.ts:356-416): +audiencesMatched+ defaults to FALSE
+      # and is only ever set true INSIDE +if (visitorProperties)+. A nil/absent
+      # visitor-properties bag therefore GATES the experience (false), even when
+      # the experience attaches no audiences — the no-properties visitor is never
+      # eligible. A PRESENT-but-empty bag (+{}+, truthy in both languages) does
+      # proceed to the empty-audiences-unrestricted / rule-evaluation logic below.
+      return false if visitor_properties.nil?
 
       to_check = audiences_to_check(experience, is_bucketed)
       return true if to_check.empty? # unrestricted (no audiences, or all permanent+bucketed)
