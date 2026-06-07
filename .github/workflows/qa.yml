@@ -93,6 +93,32 @@ jobs:
       - name: RSpec
         run: bundle exec rspec
 
+  parity:
+    name: Cross-SDK parity (MurmurHash3)
+    runs-on: ubuntu-latest
+    # The release-blocking cross-SDK hashing gate (NFR18). Runs the parity suite
+    # STANDALONE and as its OWN job so it is independent of the `test` job: a
+    # coverage failure in `test` can never mask a parity failure, and vice versa.
+    # 100% of the 75 vendored vectors must pass or this job fails.
+    #
+    # Pinned to one CRuby (3.4 — latest stable, matching the other single-Ruby
+    # jobs). The cross-ENGINE guarantee is already covered by the matrix `test`
+    # job, which also executes spec/cross_sdk on every Ruby including JRuby.
+    #
+    # Excludes the :typecheck group (rbs/steep) — parity needs neither, and the
+    # group is isolated precisely so jobs can opt out of the C-extension build.
+    env:
+      BUNDLE_WITHOUT: typecheck
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: RSpec (parity suite only)
+        run: bundle exec rspec spec/cross_sdk
+
   gem-smoke:
     name: Gem build / install / require smoke
     runs-on: ubuntu-latest
