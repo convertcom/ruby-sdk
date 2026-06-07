@@ -193,10 +193,30 @@ RSpec.describe ConvertSdk::BucketingManager do
         .to eq(expected_value("e", "v", max_traffic: 1000))
     end
 
-    it "is constructible without a log manager" do
-      expect { described_class.new(config: config) }.not_to raise_error
-      mgr = described_class.new(config: config)
-      expect { mgr.value_visitor_based("v", experience_id: "e") }.not_to raise_error
+    context "without a log manager (lean path — no debug emission)" do
+      let(:lean) { described_class.new(config: config) }
+
+      it "constructs without raising" do
+        expect { described_class.new(config: config) }.not_to raise_error
+      end
+
+      # Each public method must take its no-logger (&. else) branch and still
+      # return the same result as the logged manager — this covers the lean
+      # debug-skip branch in all three methods toward the 95% branch gate.
+      it "computes value_visitor_based identically with no logger" do
+        expect(lean.value_visitor_based("v", experience_id: "e"))
+          .to eq(manager.value_visitor_based("v", experience_id: "e"))
+      end
+
+      it "selects a bucket identically with no logger" do
+        expect(lean.select_bucket({ "a" => 50, "b" => 50 }, 0)).to eq("a")
+      end
+
+      it "buckets a visitor identically with no logger" do
+        buckets = { "a" => 50, "b" => 50 }
+        expect(lean.bucket_for_visitor(buckets, "visitor-7", experience_id: "exp-1"))
+          .to eq(manager.bucket_for_visitor(buckets, "visitor-7", experience_id: "exp-1"))
+      end
     end
   end
 end
