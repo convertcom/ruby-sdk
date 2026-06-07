@@ -6,7 +6,14 @@
 # Branch coverage and the SimpleCov gates run on CRuby only. JRuby runs the
 # suite WITHOUT the coverage gate (architecture: JRuby coverage carve-out),
 # guarded on RUBY_ENGINE so the JRuby matrix leg stays green.
-COVERAGE_ENABLED = RUBY_ENGINE != "jruby"
+#
+# DISABLE_COVERAGE=1 opts a process out entirely. The dedicated parity job
+# (qa.yml) sets it: that job runs only the narrow spec/cross_sdk subset as the
+# release-blocking hashing gate (NFR18) and is intentionally independent of
+# coverage — coverage is enforced by the full-suite `test` matrix job. Without
+# this opt-out, .rspec's `--require spec_helper` would apply the global 85% line
+# gate to the parity subset, which exercises only the hashing path.
+COVERAGE_ENABLED = RUBY_ENGINE != "jruby" && ENV["DISABLE_COVERAGE"] != "1"
 
 if COVERAGE_ENABLED
   require "simplecov"

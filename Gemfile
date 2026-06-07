@@ -15,6 +15,13 @@ gem "rspec", "~> 3.13"
 gem "simplecov", "~> 0.22.0", require: false
 gem "webmock", "~> 3.26"
 
+# `logger` is a bundled (not default) gem on Ruby 3.4+ and under JRuby, so it is
+# not require-able under `bundle exec` unless declared. The log-manager spec
+# requires it to prove a REAL stdlib Logger is accepted as a sink. Test-only —
+# the SDK itself is duck-typed and NEVER requires logger; this stays out of the
+# (empty) gemspec.
+gem "logger", require: false
+
 # Linting (RuboCop 1.87.x + performance cops)
 gem "rubocop", "~> 1.87.0", require: false
 gem "rubocop-performance", require: false
