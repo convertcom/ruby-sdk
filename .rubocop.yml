@@ -83,6 +83,31 @@ Naming/MethodParameterName:
     - h1
     - k1
 
+# The 13 rule operators (Story 2.10) port the JS SDK comparisons.ts signatures
+# verbatim: each takes a trailing positional `negation` boolean so RuleManager
+# can dispatch uniformly across all operators (processor[matching](value, rule
+# value, negation), mirroring rule-manager.ts:299-319). Keyword-izing it would
+# break the uniform positional dispatch and diverge from the JS contract.
+Style/OptionalBooleanParameter:
+  Exclude:
+    - "lib/convert_sdk/comparisons.rb"
+
+# is_in / does_not_exist are the snake_case mirrors of the FROZEN wire operator
+# names isIn / doesNotExist (the two-worlds rule for operator dispatch — the
+# dispatch-map keys stay byte-identical to the rule JSON match_type, the Ruby
+# methods underneath are snake_case). The predicate-prefix cop would force
+# in?/not_exist?, breaking that naming contract.
+Naming/PredicatePrefix:
+  Exclude:
+    - "lib/convert_sdk/comparisons.rb"
+
+# Comparisons is a cohesive 13-operator + numeric-helper module; the operator
+# set is the unit, not unmanaged growth. (Mirrors the ClassLength rationale for
+# the Client/DataManager feature surfaces.)
+Metrics/ModuleLength:
+  Exclude:
+    - "lib/convert_sdk/comparisons.rb"
+
 # The frozen value objects (BucketedVariation, BucketedFeature) are declared as
 # explicit `class X < Struct.new(...)` subclasses. This is the form the
 # architecture mandates ("frozen Struct subclass") AND the only form Steep can
