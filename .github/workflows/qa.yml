@@ -63,6 +63,13 @@ jobs:
   test:
     name: Test (${{ matrix.ruby }})
     runs-on: ubuntu-latest
+    # `rbs`/`steep` live in the :typecheck Gemfile group; exclude them here so
+    # NO matrix leg installs them. JRuby in particular cannot build rbs's
+    # `ext/rbs_extension` C extension (universal-java) — without this, the JRuby
+    # leg's `bundle install` aborts before any spec runs. RSpec needs neither
+    # gem; the dedicated `typecheck` job installs the full set (no BUNDLE_WITHOUT).
+    env:
+      BUNDLE_WITHOUT: typecheck
     strategy:
       fail-fast: false
       matrix:

@@ -19,9 +19,16 @@ gem "webmock", "~> 3.26"
 gem "rubocop", "~> 1.87.0", require: false
 gem "rubocop-performance", require: false
 
-# Type checking
-gem "rbs", require: false
-gem "steep", require: false
+# Type checking (CRuby-only). `rbs` ships a C native extension
+# (ext/rbs_extension) that cannot build under JRuby (universal-java); `steep`
+# depends on `rbs`. Isolated in the :typecheck group so the JRuby test matrix
+# leg installs via `BUNDLE_WITHOUT=typecheck` (set on the `test` job in qa.yml)
+# without attempting the C-extension build. The CRuby `typecheck` job installs
+# this group and runs `rbs validate` + `steep check`.
+group :typecheck do
+  gem "rbs", require: false
+  gem "steep", require: false
+end
 
 # Documentation
 gem "yard", require: false
