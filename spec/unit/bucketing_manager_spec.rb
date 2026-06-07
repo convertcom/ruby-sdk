@@ -53,9 +53,10 @@ RSpec.describe ConvertSdk::BucketingManager do
       # the manager must hash exactly experience_id + visitor_id.
       same = manager.value_visitor_based("c", experience_id: "ab")
       expect(same).to eq(expected_value("ab", "c"))
-      expect(manager.value_visitor_based("c", experience_id: "ab"))
-        .not_to eq(manager.value_visitor_based("ab", experience_id: "c")) \
-        unless expected_value("ab", "c") == expected_value("c", "ab")
+      unless expected_value("ab", "c") == expected_value("c", "ab")
+        expect(manager.value_visitor_based("c", experience_id: "ab"))
+          .not_to eq(manager.value_visitor_based("ab", experience_id: "c"))
+      end
     end
 
     it "defaults experience_id to empty string when omitted" do
