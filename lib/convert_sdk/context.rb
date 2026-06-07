@@ -92,9 +92,7 @@ module ConvertSdk
     # @return [self]
     def update_visitor_properties(properties)
       normalised = deep_stringify(properties || {})
-      account_id = @data_manager.account_id
-      project_id = @data_manager.project_id
-      @data_store_manager.merge_visitor_data(account_id, project_id, @visitor_id) do |_current|
+      @data_store_manager.merge_visitor_data(account_key, project_key, @visitor_id) do |_current|
         { "segments" => normalised }
       end
       @attributes = @attributes.merge(normalised)
@@ -114,7 +112,7 @@ module ConvertSdk
     #
     # @return [Hash{String=>Object}] the visitor's StoreData (or the empty shape).
     def get_visitor_data
-      key = @data_store_manager.visitor_key(@data_manager.account_id, @data_manager.project_id, @visitor_id)
+      key = @data_store_manager.visitor_key(account_key, project_key, @visitor_id)
       stored = @data_store_manager.get(key)
       stored.is_a?(Hash) ? stored : empty_store_data
     rescue StandardError => e
@@ -154,6 +152,19 @@ module ConvertSdk
     end
 
     private
+
+    # The account half of the visitor store key. The {DataManager} reader is
+    # +nil+ before any config is installed (degrade-gracefully, NFR12); coerced
+    # to +""+ here so the key builder (which interpolates) gets a String. A
+    # pre-config key is degenerate but harmless — there is no config to decide on.
+    def account_key
+      @data_manager.account_id.to_s
+    end
+
+    # The project half of the visitor store key (see {#account_key}).
+    def project_key
+      @data_manager.project_id.to_s
+    end
 
     # The empty +StoreData+ shape returned when a visitor has no persisted data.
     def empty_store_data
