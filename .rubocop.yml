@@ -53,11 +53,17 @@ Metrics/MethodLength:
 # RuleManager (Story 2.10) is added on the same principle: the OR->AND->OR_WHEN
 # walk levels + leaf evaluation + validation are one cohesive unit mirroring the
 # JS rule-manager.ts class — length is the walk surface, not unmanaged growth.
+# Context (Story 2.11) joins for the same reason: the per-visitor public API
+# (create/attributes/lookups from 2.8 + run_experience(s) decision entry points)
+# is one cohesive surface mirroring the JS context.ts class — the orchestration
+# itself lives in DataManager/ExperienceManager, Context just wires the entry
+# points, fires the lifecycle event, and holds the never-crash boundary.
 Metrics/ClassLength:
   Exclude:
     - "lib/convert_sdk/client.rb"
     - "lib/convert_sdk/data_manager.rb"
     - "lib/convert_sdk/rule_manager.rb"
+    - "lib/convert_sdk/context.rb"
 
 # The Client (Story 2.5) is wired by explicit constructor injection of its six
 # collaborator managers (config, log, http, data-store, event, data) — the
@@ -65,10 +71,16 @@ Metrics/ClassLength:
 # singletons, so each dependency is a named keyword argument rather than being
 # hidden inside an options bag. The Context (Story 2.8) follows the same
 # injection contract and adds the two per-visitor values it binds (visitor_id +
-# attributes) on top of its five injected managers — seven keyword params is the
-# wiring contract, not a smell. The default 5-param limit is raised to admit it.
+# attributes) on top of its five injected managers. Story 2.11 grows the
+# injection surface again: the DataManager gains its decision-flow collaborators
+# (bucketing_manager, rule_manager, account/project resolvers) and the Context
+# gains the experience_manager. Because every one of these is a NAMED keyword
+# argument (self-documenting at the call site — the readability problem the cop
+# guards against applies to positional lists, not keyword injection), keyword
+# args are excluded from the count; the positional limit stays at 7.
 Metrics/ParameterLists:
   Max: 7
+  CountKeywordArgs: false
 
 # get_visitor_data / get_config_entity (Story 2.8) are FROZEN public-API parity
 # names mirroring the JS SDK surface (getVisitorData/getConfigEntity,
