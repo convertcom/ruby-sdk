@@ -163,6 +163,9 @@ RSpec.describe ConvertSdk::Client do
 
     it "does not raise from #initialize when a collaborator raises during bootstrap" do
       raising_dm = instance_double(ConvertSdk::DataManager)
+      # The Client wires the timer-off refresh callable into the DataManager
+      # before bootstrap (Story 2.7); allow that setter on the double.
+      allow(raising_dm).to receive(:refetch=)
       allow(raising_dm).to receive(:install_config).and_raise(StandardError, "boom")
       expect { client_with(data_manager: raising_dm) }.not_to raise_error
     end

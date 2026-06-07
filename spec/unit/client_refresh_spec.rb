@@ -8,24 +8,24 @@ require "spec_helper"
 # invoked by calling the Client's refresh entry point directly (no real sleeps),
 # the monotonic clock is stubbed so TTL staleness is controlled without time
 # passing, and WebMock sequenced stubs simulate config v1 -> v2 -> outage.
+# A controllable monotonic clock: tests advance it explicitly so the
+# DataManager's TTL math is deterministic and free of real waits.
+class FakeClock
+  def initialize(now = 1000.0)
+    @now = now
+  end
+
+  def call
+    @now
+  end
+
+  def advance(seconds)
+    @now += seconds
+  end
+end
+
 RSpec.describe "ConvertSdk::Client config refresh (Story 2.7)" do
   let(:base_options) { { config_endpoint: HttpStubs::CONFIG_HOST } }
-
-  # A controllable monotonic clock: tests advance it explicitly so TTL math is
-  # deterministic and free of real waits.
-  class FakeClock
-    def initialize(now = 1000.0)
-      @now = now
-    end
-
-    def call
-      @now
-    end
-
-    def advance(seconds)
-      @now += seconds
-    end
-  end
 
   # Build a client through the real public factory with test-host endpoints and
   # an injected fake clock (so DataManager's TTL math is controllable).
@@ -142,9 +142,9 @@ RSpec.describe "ConvertSdk::Client config refresh (Story 2.7)" do
       clock = FakeClock.new
       stub_vendored_config(sdk_key: "sdk-key-1")
       client = create(sdk_key: "sdk-key-1", data_refresh_interval: nil, clock: clock)
-      reset_http_capture
       client.ensure_fresh_config!
-      expect(captured_requests).to be_empty
+      # Exactly one request total (the construction fetch); no decision-time refetch.
+      expect(a_request(:get, %r{/config/sdk-key-1})).to have_been_made.once
     end
 
     it "synchronously refetches before deciding when the cached config is stale" do
@@ -180,10 +180,11 @@ RSpec.describe "ConvertSdk::Client config refresh (Story 2.7)" do
         .to_return(status: 200, body: JSON.generate(updated_config), headers: json_headers)
       client = create(sdk_key: "sdk-key-1", data_refresh_interval: nil, clock: clock)
       clock.advance(ConvertSdk::DEFAULT_CONFIG_TTL + 1)
-      reset_http_capture
       threads = Array.new(8) { Thread.new { client.ensure_fresh_config! } }
       threads.each(&:join)
-      expect(captured_requests.size).to eq(1)
+      # One construction fetch + exactly ONE collapsed refetch (herd guard) = 2.
+      expect(a_request(:get, %r{/config/sdk-key-1})).to have_been_made.twice
+      expect(client.data_manager.account_id).to eq("ACCT-2")
     end
   end
 
@@ -221,25 +222,37 @@ RSpec.describe "ConvertSdk::Client config refresh (Story 2.7)" do
   # Build a Client through the factory with an explicit store and/or log_manager.
   # ConvertSdk.create does not accept a log_manager, so we wire the managers in
   # the same order the factory does when a custom log_manager is needed.
-  def build_client(store: nil, log_manager: nil, sdk_key:, **options)
+  def build_client(sdk_key:, store: nil, log_manager: nil, **options)
     return create(sdk_key: sdk_key, store: store, **options) if log_manager.nil?
 
     config_options = options.merge(sdk_key: sdk_key, config_endpoint: HttpStubs::CONFIG_HOST)
     clock = config_options.delete(:clock)
     config = ConvertSdk::Config.new(log_manager: log_manager, **config_options)
-    http_client = ConvertSdk::HttpClient.new(log_manager: log_manager,
-                                             open_timeout: config.open_timeout,
-                                             read_timeout: config.read_timeout)
     dsm = ConvertSdk::DataStoreManager.new(log_manager: log_manager, store: store)
-    event_manager = ConvertSdk::EventManager.new(log_manager: log_manager)
-    dm_options = clock.nil? ? {} : { clock: clock }
-    data_manager = ConvertSdk::DataManager.new(
-      log_manager: log_manager, data_store_manager: dsm,
-      config_key: dsm.config_key(sdk_key), ttl: config.data_refresh_interval, **dm_options
+    ConvertSdk::Client.new(
+      config: config, log_manager: log_manager,
+      http_client: build_http_client(config, log_manager),
+      data_store_manager: dsm,
+      event_manager: ConvertSdk::EventManager.new(log_manager: log_manager),
+      data_manager: build_data_manager(config, sdk_key, dsm, log_manager, clock)
     )
-    ConvertSdk::Client.new(config: config, log_manager: log_manager, http_client: http_client,
-                          data_store_manager: dsm, event_manager: event_manager,
-                          data_manager: data_manager)
+  end
+
+  # The HttpClient wired with the config's bounded timeouts.
+  def build_http_client(config, log_manager)
+    ConvertSdk::HttpClient.new(log_manager: log_manager,
+                               open_timeout: config.open_timeout,
+                               read_timeout: config.read_timeout)
+  end
+
+  # The DataManager wired with the Story 2.7 cache surface (timer-off derived
+  # from a nil data_refresh_interval, as in the production factory).
+  def build_data_manager(config, sdk_key, dsm, log_manager, clock)
+    clock_option = clock.nil? ? {} : { clock: clock }
+    ConvertSdk::DataManager.new(
+      log_manager: log_manager, data_store_manager: dsm,
+      config_key: dsm.config_key(sdk_key), ttl: config.data_refresh_interval, **clock_option
+    )
   end
 
   # The Client's refresh BackgroundTimer instance.

@@ -3,12 +3,34 @@ module ConvertSdk
   # surface through which config is read.
   class DataManager
     @log_manager: LogManager
+    @data_store_manager: DataStoreManager?
+    @config_key: String?
+    @ttl: Numeric?
+    @timer_off: bool
+    @clock: ^() -> Float
     @config: Hash[String, untyped]?
+    @fetched_at: Float?
     @config_mutex: Thread::Mutex
+    @fetch_mutex: Thread::Mutex
 
-    def initialize: (log_manager: LogManager) -> void
+    attr_accessor refetch: (^() -> untyped)?
+
+    def initialize: (
+      log_manager: LogManager,
+      ?data_store_manager: DataStoreManager?,
+      ?config_key: String?,
+      ?ttl: Numeric?,
+      ?clock: ^() -> Float,
+      ?refetch: (^() -> untyped)?
+    ) -> void
 
     def install_config: (untyped hash) -> (Symbol | bool)
+
+    def install_from_cache_if_fresh: () -> Symbol?
+
+    def ensure_fresh_config!: () -> void
+
+    def config_stale?: () -> bool
 
     def config_available?: () -> bool
 
@@ -37,6 +59,12 @@ module ConvertSdk
     def goal_by_key: (String key) -> Hash[String, untyped]?
 
     private
+
+    def cache_config: (Hash[String, untyped] frozen) -> void
+
+    def cached_entry: () -> Hash[String, untyped]?
+
+    def effective_ttl: () -> Numeric
 
     def data: () -> Hash[String, untyped]?
 
