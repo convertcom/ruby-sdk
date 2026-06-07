@@ -40,10 +40,68 @@ RSpec.describe ConvertSdk::FeatureManager do
     end
   end
 
-  # The visitor + attributes combination that buckets into
-  # test-experience-ab-fullstack-2 (verified in context_spec / Story 2.11). That
-  # experience's variations carry fullStackFeature changes for feature-1 (10024)
-  # and feature-2 (10025).
+  # Build a fixture-loaded DataManager from an arbitrary direct-data envelope —
+  # reused by the vendored fixture above and the Ruby-local casting config below.
+  def build_data_manager(envelope)
+    dm = ConvertSdk::DataManager.new(
+      log_manager: log_manager, data_store_manager: data_store_manager,
+      bucketing_manager: bucketing_manager, rule_manager: rule_manager,
+      account_resolver: -> { "10022898" }, project_resolver: -> { "10025986" }
+    )
+    dm.install_config(stringify(envelope))
+    dm
+  end
+
+  # A minimal Ruby-LOCAL direct-data config (NOT a fixture edit) whose single
+  # always-bucketing experience carries a fullStackFeature change for a feature
+  # declaring float/integer/json variables — the only way to drive those casts
+  # through a real bucketed variation (the vendored fixture's visitor buckets
+  # only into feature-1's boolean/string variation). Empty audiences + no
+  # site_area + present (empty) visitor properties + a single 100%-traffic
+  # running variation make bucketing deterministic. Assembled from small parts so
+  # no single builder is over-long.
+  def local_cast_feature
+    { "id" => "20001", "name" => "Typed Feature", "key" => "typed-feature",
+      "variables" => [
+        { "key" => "price", "type" => "float" },
+        { "key" => "button-height", "type" => "integer" },
+        { "key" => "additionalData", "type" => "json" }
+      ] }
+  end
+
+  def local_cast_experience
+    { "id" => "300001", "name" => "Typed Cast Exp", "key" => "typed-cast-exp",
+      "type" => "a/b_fullstack", "status" => "active",
+      "environments" => ["live"], "audiences" => [],
+      "variations" => [{
+        "id" => "400001", "name" => "Original", "status" => "running",
+        "is_baseline" => true, "key" => "400001-original", "traffic_allocation" => 100.0,
+        "changes" => [{
+          "id" => "500001", "type" => "fullStackFeature",
+          "data" => { "feature_id" => "20001",
+                      "variables_data" => { "price" => 100, "button-height" => 40,
+                                            "additionalData" => "{\"foo\":\"bar\",\"v\":2}" } }
+        }]
+      }] }
+  end
+
+  def local_cast_config
+    { "environment" => "live",
+      "data" => {
+        "account_id" => "10022898", "project" => { "id" => "10025986" },
+        "audiences" => [], "segments" => [], "goals" => [],
+        "features" => [local_cast_feature], "experiences" => [local_cast_experience]
+      } }
+  end
+
+  # The visitor + attributes combination that buckets into BOTH
+  # test-experience-ab-fullstack-2 (variation 100299457) AND
+  # test-experience-ab-fullstack-3 (variation 100299461) — verified against the
+  # vendored fixture's real bucketing outcome. BOTH bucketed variations carry a
+  # fullStackFeature change for feature-1 (id 10024); NEITHER carries feature-2
+  # (id 10025, which sits only on the original-page variations the visitor did
+  # not get). fullstack-4 is a VARIATION_NOT_DECIDED miss. Feature-1 is therefore
+  # carried by TWO bucketed variations (multi-experience), feature-2 by none.
   let(:visitor) { "visitor-1" }
   let(:bucketing_attrs) do
     { visitor_properties: { "varName1" => "value1", "varName2" => "value2" },
@@ -56,8 +114,12 @@ RSpec.describe ConvertSdk::FeatureManager do
   end
 
   describe "#run_feature — resolution through bucketing (AC#1, #3)" do
-    it "returns an ENABLED frozen BucketedFeature for a feature carried by the bucketed variation" do
-      result = manager.run_feature(visitor, "feature-1", bucketing_attrs)
+    # feature-1 is carried by exactly one bucketed variation when only ONE
+    # experience is in scope, so an experience filter yields a single feature.
+    it "returns an ENABLED frozen BucketedFeature for a feature carried by a single bucketed variation" do
+      result = manager.run_features(visitor, bucketing_attrs,
+                                    experiences: ["test-experience-ab-fullstack-2"],
+                                    features: ["feature-1"]).first
       expect(result).to be_a(ConvertSdk::BucketedFeature)
       expect(result.status).to eq(ConvertSdk::FeatureStatus::ENABLED)
       expect(result).to be_frozen
@@ -69,19 +131,23 @@ RSpec.describe ConvertSdk::FeatureManager do
     end
 
     it "carries the experience provenance from the bucketed variation" do
-      result = manager.run_feature(visitor, "feature-2", bucketing_attrs)
+      result = manager.run_features(visitor, bucketing_attrs,
+                                    experiences: ["test-experience-ab-fullstack-2"],
+                                    features: ["feature-1"]).first
       expect(result.status).to eq(ConvertSdk::FeatureStatus::ENABLED)
       expect(result.experience_id).to eq("100218245")
     end
 
     it "never inlines the wire strings — status comes from the FeatureStatus enum" do
-      enabled = manager.run_feature(visitor, "feature-1", bucketing_attrs)
+      enabled = manager.run_features(visitor, bucketing_attrs,
+                                     experiences: ["test-experience-ab-fullstack-2"],
+                                     features: ["feature-1"]).first
       expect(enabled.status).to be(ConvertSdk::FeatureStatus::ENABLED)
     end
   end
 
   describe "#run_feature — miss semantics (AC#5)" do
-    it "returns a DISABLED BucketedFeature (id/name/key) when the feature is declared but the visitor is not bucketed" do
+    it "returns a DISABLED BucketedFeature (id/name/key) when declared but the visitor is not bucketed" do
       result = manager.run_feature(visitor, "feature-1", miss_attrs)
       expect(result).to be_a(ConvertSdk::BucketedFeature)
       expect(result.status).to eq(ConvertSdk::FeatureStatus::DISABLED)
@@ -101,7 +167,7 @@ RSpec.describe ConvertSdk::FeatureManager do
 
     it "emits a debug reason log on a miss (Ruby addition; never an exception)" do
       manager.run_feature(visitor, "feature-1", miss_attrs)
-      debug = sink.entries.select { |level, _| level == :debug }.map(&:last)
+      debug = sink.entries.filter_map { |entry| entry.last if entry.first == :debug }
       expect(debug.join("\n")).to include("FeatureManager")
     end
 
@@ -118,10 +184,12 @@ RSpec.describe ConvertSdk::FeatureManager do
       results = manager.run_features(visitor, bucketing_attrs)
       expect(results).to be_an(Array)
       expect(results).to all(be_a(ConvertSdk::BucketedFeature))
-      by_key = results.each_with_object({}) { |f, h| h[f.key] = f.status }
-      expect(by_key["feature-1"]).to eq(ConvertSdk::FeatureStatus::ENABLED)
-      expect(by_key["feature-2"]).to eq(ConvertSdk::FeatureStatus::ENABLED)
-      expect(by_key["not-attached-feature-3"]).to eq(ConvertSdk::FeatureStatus::DISABLED)
+      statuses = results.group_by(&:key).transform_values { |fs| fs.map(&:status).uniq }
+      # feature-1 is carried by BOTH bucketed variations -> ENABLED (one per exp).
+      expect(statuses["feature-1"]).to include(ConvertSdk::FeatureStatus::ENABLED)
+      # feature-2 is NOT carried by either bucketed variation -> DISABLED padding.
+      expect(statuses["feature-2"]).to eq([ConvertSdk::FeatureStatus::DISABLED])
+      expect(statuses["not-attached-feature-3"]).to eq([ConvertSdk::FeatureStatus::DISABLED])
     end
 
     it "returns every declared feature as DISABLED when the visitor is bucketed nowhere" do
@@ -142,14 +210,33 @@ RSpec.describe ConvertSdk::FeatureManager do
   end
 
   describe "typed-variable casting (AC#4) — JS castType parity" do
-    it "casts feature-1 variables per declared types (boolean, string)" do
-      result = manager.run_feature(visitor, "feature-1", bucketing_attrs)
-      expect(result.variables["enabled"]).to be(true)          # boolean "true" -> true
-      expect(result.variables["caption"]).to eq("Click that")  # string
+    it "casts feature-1 variables (boolean, string) from the bucketed variation's raw values" do
+      # fullstack-2's bucketed variation (100299457) carries
+      # {enabled: "false", caption: "Not allowed"} for feature-1.
+      result = manager.run_features(visitor, bucketing_attrs,
+                                    experiences: ["test-experience-ab-fullstack-2"],
+                                    features: ["feature-1"]).first
+      expect(result.variables["enabled"]).to be(false)          # boolean "false" -> false
+      expect(result.variables["caption"]).to eq("Not allowed")  # string
     end
 
-    it "casts feature-2 variables per declared types (float, integer, json)" do
-      result = manager.run_feature(visitor, "feature-2", bucketing_attrs)
+    it "casts feature-1 variables (boolean true) from the other bucketed experience" do
+      # fullstack-3's bucketed variation (100299461) carries enabled: "true".
+      result = manager.run_features(visitor, bucketing_attrs,
+                                    experiences: ["test-experience-ab-fullstack-3"],
+                                    features: ["feature-1"]).first
+      expect(result.variables["enabled"]).to be(true)
+      expect(result.variables["caption"]).to eq("Allowed")
+    end
+
+    # feature-2 (float/integer/json) is not carried by any variation the fixture
+    # visitor buckets into, so a minimal Ruby-local direct-data config (NOT a
+    # fixture edit) exercises float/integer/json casting from a bucketed variation.
+    it "casts float/integer/json variables from a bucketed variation (Ruby-local config)" do
+      local_dm = build_data_manager(local_cast_config)
+      local_mgr = described_class.new(data_manager: local_dm, log_manager: log_manager)
+      result = local_mgr.run_features("anyone", { visitor_properties: {}, environment: "live" },
+                                      features: ["typed-feature"]).first
       expect(result.variables["price"]).to eq(100.0)
       expect(result.variables["price"]).to be_a(Float)
       expect(result.variables["button-height"]).to eq(40)

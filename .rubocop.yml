@@ -64,6 +64,12 @@ Metrics/ClassLength:
     - "lib/convert_sdk/data_manager.rb"
     - "lib/convert_sdk/rule_manager.rb"
     - "lib/convert_sdk/context.rb"
+    # FeatureManager (Story 3.1) ports feature-manager.ts (the run_feature /
+    # run_features resolution surface) PLUS the castType truth table
+    # (types-utils.ts). The two cohesive JS modules it mirrors are the unit; the
+    # length reflects the ported reference surface, not unmanaged growth (same
+    # rationale as the DataManager/RuleManager feature surfaces above).
+    - "lib/convert_sdk/feature_manager.rb"
 
 # The Client (Story 2.5) is wired by explicit constructor injection of its six
 # collaborator managers (config, log, http, data-store, event, data) — the
@@ -119,6 +125,15 @@ Naming/PredicatePrefix:
   Exclude:
     - "lib/convert_sdk/comparisons.rb"
     - "lib/convert_sdk/rule_manager.rb"
+
+# cast_boolean is one branch of the symmetric cast_* helper family (cast_boolean
+# / cast_integer / cast_float / cast_json) that mirrors the JS castType switch
+# (types-utils.ts:13-54) one-to-one. Only the boolean branch happens to return a
+# bool; renaming it cast_boolean? would break the deliberate one-name-per-cast-
+# branch symmetry (the others return Integer/Float/parsed-JSON, not predicates).
+Naming/PredicateMethod:
+  Exclude:
+    - "lib/convert_sdk/feature_manager.rb"
 
 # Comparisons is a cohesive 13-operator + numeric-helper module; the operator
 # set is the unit, not unmanaged growth. (Mirrors the ClassLength rationale for
