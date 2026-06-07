@@ -80,6 +80,11 @@ CONFIG_INVALID_TABLE = {
   "unknown option key" => [{ sdk_key: "k", bogus_option: true }, /bogus_option|unknown/i]
 }.freeze
 
+# sdk_key/sdk_key_secret/data are presence options the minimal valid config has
+# to set or leave unset, so their defaults are asserted separately rather than in
+# the swept defaults table.
+CONFIG_PRESENCE_OPTIONS = %i[sdk_key sdk_key_secret data].freeze
+
 RSpec.describe ConvertSdk::Config do
   # A minimal valid config (sdk_key satisfies the presence rule). Used wherever a
   # constructible instance is needed without restating every kwarg.
@@ -92,13 +97,22 @@ RSpec.describe ConvertSdk::Config do
       expect(described_class::DEFAULTS).to be_frozen
     end
 
-    CONFIG_DEFAULTS_TABLE.each do |option, expected|
+    CONFIG_DEFAULTS_TABLE.except(*CONFIG_PRESENCE_OPTIONS).each do |option, expected|
       it "defaults ##{option} to its JS-parity value" do
         # max_hash has no kwarg (it is a fixed bucketing constant); read it off
         # the instance directly. Everything else has a like-named reader.
         config = build
         expect(config.public_send(option)).to eq(expected)
       end
+    end
+
+    it "defaults the presence options (sdk_key_secret/data) to nil in key mode" do
+      config = build
+      expect([config.sdk_key_secret, config.data]).to eq([nil, nil])
+    end
+
+    it "defaults sdk_key to nil in data-only mode" do
+      expect(described_class.new(data: {}).sdk_key).to be_nil
     end
 
     it "freezes JS-parity bucketing constants to the exact frozen numbers" do
@@ -111,7 +125,12 @@ RSpec.describe ConvertSdk::Config do
   describe "override merge (AC#1)" do
     CONFIG_OVERRIDE_TABLE.each do |option, value|
       it "accepts an explicit ##{option} override over the default" do
-        config = described_class.new(sdk_key: "acct/proj", data: {}, **{ option => value })
+        # Start from a presence-satisfying base (data: {}) then layer the single
+        # option under test; building one kwargs hash avoids duplicate-kwarg
+        # clashes when the option itself is sdk_key/data.
+        kwargs = { data: {} }
+        kwargs[option] = value
+        config = described_class.new(**kwargs)
         expect(config.public_send(option)).to eq(value)
       end
     end
@@ -174,7 +193,7 @@ RSpec.describe ConvertSdk::Config do
     end
 
     it "raises stdlib ArgumentError (no custom exception subclass)" do
-      expect { described_class.new }.to raise_error { |error| expect(error.class).to eq(ArgumentError) }
+      expect { described_class.new }.to(raise_error { |error| expect(error.class).to eq(ArgumentError) })
     end
   end
 
