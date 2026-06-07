@@ -2,6 +2,25 @@
 
 require "spec_helper"
 
+# The five public level methods and the sink level each dispatches to.
+# trace and debug both land on the sink's #debug (stdlib has no trace).
+LOG_METHOD_TO_SINK_LEVEL = {
+  trace: :debug,
+  debug: :debug,
+  info: :info,
+  warn: :warn,
+  error: :error
+}.freeze
+
+# Numeric LogLevel value gating each public method's emission.
+LOG_METHOD_TO_VALUE = {
+  trace: ConvertSdk::LogLevel::TRACE,
+  debug: ConvertSdk::LogLevel::DEBUG,
+  info: ConvertSdk::LogLevel::INFO,
+  warn: ConvertSdk::LogLevel::WARN,
+  error: ConvertSdk::LogLevel::ERROR
+}.freeze
+
 RSpec.describe ConvertSdk::LogManager do
   let(:sink) { CapturingSink.new }
 
@@ -9,25 +28,6 @@ RSpec.describe ConvertSdk::LogManager do
   def manager(level: ConvertSdk::LogLevel::TRACE, secrets: [])
     described_class.new(level: level, sink: sink, secrets: secrets)
   end
-
-  # The five public level methods and the sink level each dispatches to.
-  # trace and debug both land on the sink's #debug (stdlib has no trace).
-  METHOD_TO_SINK_LEVEL = {
-    trace: :debug,
-    debug: :debug,
-    info: :info,
-    warn: :warn,
-    error: :error
-  }.freeze
-
-  # Numeric LogLevel value gating each public method's emission.
-  METHOD_TO_VALUE = {
-    trace: ConvertSdk::LogLevel::TRACE,
-    debug: ConvertSdk::LogLevel::DEBUG,
-    info: ConvertSdk::LogLevel::INFO,
-    warn: ConvertSdk::LogLevel::WARN,
-    error: ConvertSdk::LogLevel::ERROR
-  }.freeze
 
   describe "#add_sink — duck-type validation" do
     let(:log_manager) { described_class.new(level: ConvertSdk::LogLevel::TRACE) }
@@ -72,7 +72,7 @@ RSpec.describe ConvertSdk::LogManager do
   end
 
   describe "level dispatch (trace/debug -> sink #debug)" do
-    METHOD_TO_SINK_LEVEL.each do |method, sink_level|
+    LOG_METHOD_TO_SINK_LEVEL.each do |method, sink_level|
       it "##{method} dispatches to sink ##{sink_level}" do
         manager.public_send(method, "C#m: x")
         expect(sink.entries).to eq([[sink_level, "C#m: x"]])
@@ -83,10 +83,10 @@ RSpec.describe ConvertSdk::LogManager do
   describe "level gating (numeric threshold)" do
     # For each (public method, configured threshold) pair the method emits iff
     # the method's value is >= the threshold. 5 methods x 6 thresholds.
-    METHOD_TO_VALUE.each do |method, method_value|
+    LOG_METHOD_TO_VALUE.each do |method, method_value|
       (ConvertSdk::LogLevel::TRACE..ConvertSdk::LogLevel::SILENT).each do |threshold|
         should_emit = method_value >= threshold
-        it "##{method} #{should_emit ? 'emits' : 'suppressed'} at threshold #{threshold}" do
+        it "##{method} #{should_emit ? "emits" : "suppressed"} at threshold #{threshold}" do
           manager(level: threshold).public_send(method, "C#m: msg")
           expect(sink.entries.empty?).to be(!should_emit)
         end
@@ -134,7 +134,7 @@ RSpec.describe ConvertSdk::LogManager do
 
     # Every public log method, with a secret-bearing message AND a secret in a
     # URL query. None may leak the raw secret to the sink.
-    METHOD_TO_VALUE.each_key do |method|
+    LOG_METHOD_TO_VALUE.each_key do |method|
       it "##{method} never emits the raw secret" do
         mgr.public_send(method, "C#m: key=#{secret} at https://h/p?token=#{secret}")
         expect(sink.joined).not_to include(secret)
