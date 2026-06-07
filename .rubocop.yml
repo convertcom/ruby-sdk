@@ -1,5 +1,18 @@
+plugins:
+  - rubocop-performance
+
 AllCops:
-  TargetRubyVersion: 2.6
+  TargetRubyVersion: 3.1
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - "bin/**/*"
+    - "vendor/**/*"
+
+# Every .rb file must carry the magic comment (architecture invariant).
+Style/FrozenStringLiteralComment:
+  Enabled: true
+  EnforcedStyle: always
 
 Style/StringLiterals:
   Enabled: true
@@ -11,3 +24,9 @@ Style/StringLiteralsInInterpolation:
 
 Layout/LineLength:
   Max: 120
+
+# Specs read more clearly without these constraints.
+Metrics/BlockLength:
+  Exclude:
+    - "spec/**/*"
+    - "*.gemspec"
