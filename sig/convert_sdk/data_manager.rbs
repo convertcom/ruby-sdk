@@ -1,0 +1,49 @@
+module ConvertSdk
+  # The in-memory home of the deep-frozen project config snapshot and the only
+  # surface through which config is read.
+  class DataManager
+    @log_manager: LogManager
+    @config: Hash[String, untyped]?
+    @config_mutex: Thread::Mutex
+
+    def initialize: (log_manager: LogManager) -> void
+
+    def install_config: (untyped hash) -> (Symbol | bool)
+
+    def config_available?: () -> bool
+
+    def account_id: () -> String?
+
+    def project_id: () -> String?
+
+    def project: () -> Hash[String, untyped]?
+
+    def experiences: () -> Array[untyped]
+
+    def features: () -> Array[untyped]
+
+    def goals: () -> Array[untyped]
+
+    def audiences: () -> Array[untyped]
+
+    def segments: () -> Array[untyped]
+
+    def locations: () -> Array[untyped]
+
+    def experience_by_key: (String key) -> Hash[String, untyped]?
+
+    def feature_by_key: (String key) -> Hash[String, untyped]?
+
+    def goal_by_key: (String key) -> Hash[String, untyped]?
+
+    private
+
+    def data: () -> Hash[String, untyped]?
+
+    def collection: (String name) -> Array[untyped]
+
+    def find_by_key: (Array[untyped] list, String key) -> Hash[String, untyped]?
+
+    def deep_freeze: (untyped node) -> untyped
+  end
+end
