@@ -2,26 +2,26 @@
 
 require "spec_helper"
 
+# Every SystemEvents constant paired with its verbatim JS wire string, so the
+# parity surface (FR57) is asserted in one tabular sweep rather than ten
+# copy-pasted examples. Top-level (RuboCop forbids constants defined in a block).
+EVENT_MANAGER_ALL_EVENTS = {
+  "READY" => ConvertSdk::SystemEvents::READY,
+  "CONFIG_UPDATED" => ConvertSdk::SystemEvents::CONFIG_UPDATED,
+  "BUCKETING" => ConvertSdk::SystemEvents::BUCKETING,
+  "CONVERSION" => ConvertSdk::SystemEvents::CONVERSION,
+  "API_QUEUE_RELEASED" => ConvertSdk::SystemEvents::API_QUEUE_RELEASED,
+  "SEGMENTS" => ConvertSdk::SystemEvents::SEGMENTS,
+  "LOCATION_ACTIVATED" => ConvertSdk::SystemEvents::LOCATION_ACTIVATED,
+  "LOCATION_DEACTIVATED" => ConvertSdk::SystemEvents::LOCATION_DEACTIVATED,
+  "AUDIENCES" => ConvertSdk::SystemEvents::AUDIENCES,
+  "DATASTORE_QUEUE_RELEASED" => ConvertSdk::SystemEvents::DATASTORE_QUEUE_RELEASED
+}.freeze
+
 RSpec.describe ConvertSdk::EventManager do
   let(:sink) { CapturingSink.new }
   let(:log_manager) { ConvertSdk::LogManager.new(level: ConvertSdk::LogLevel::TRACE, sink: sink) }
   subject(:manager) { described_class.new(log_manager: log_manager) }
-
-  # Every SystemEvents constant paired with its verbatim JS wire string, so the
-  # parity surface (FR57) is asserted in one tabular sweep rather than ten
-  # copy-pasted examples.
-  ALL_EVENTS = {
-    "READY" => ConvertSdk::SystemEvents::READY,
-    "CONFIG_UPDATED" => ConvertSdk::SystemEvents::CONFIG_UPDATED,
-    "BUCKETING" => ConvertSdk::SystemEvents::BUCKETING,
-    "CONVERSION" => ConvertSdk::SystemEvents::CONVERSION,
-    "API_QUEUE_RELEASED" => ConvertSdk::SystemEvents::API_QUEUE_RELEASED,
-    "SEGMENTS" => ConvertSdk::SystemEvents::SEGMENTS,
-    "LOCATION_ACTIVATED" => ConvertSdk::SystemEvents::LOCATION_ACTIVATED,
-    "LOCATION_DEACTIVATED" => ConvertSdk::SystemEvents::LOCATION_DEACTIVATED,
-    "AUDIENCES" => ConvertSdk::SystemEvents::AUDIENCES,
-    "DATASTORE_QUEUE_RELEASED" => ConvertSdk::SystemEvents::DATASTORE_QUEUE_RELEASED
-  }.freeze
 
   # Captures listener invocations as [payload, err] without each test
   # hand-rolling its own accumulator (kills cross-case duplication).
@@ -33,7 +33,8 @@ RSpec.describe ConvertSdk::EventManager do
 
   describe "registration parity (AC#1)" do
     it "registers a SystemEvents constant and its string under the same key" do
-      via_const, via_string = [], []
+      via_const = []
+      via_string = []
       manager.on(ConvertSdk::SystemEvents::READY) { |payload| via_const << payload }
       manager.on("ready") { |payload| via_string << payload }
 
@@ -75,9 +76,10 @@ RSpec.describe ConvertSdk::EventManager do
     end
 
     context "tabular: every SystemEvents constant registers and fires under its verbatim JS string" do
-      ALL_EVENTS.each do |name, wire|
+      EVENT_MANAGER_ALL_EVENTS.each do |name, wire|
         it "#{name} == #{wire.inspect}: constant and string register the same listener" do
-          via_const, via_string = [], []
+          via_const = []
+          via_string = []
           manager.on(wire) { via_const << :c }        # registered via the constant value
           manager.on(wire.to_s) { via_string << :s }  # registered via the literal string
           manager.fire(wire)
