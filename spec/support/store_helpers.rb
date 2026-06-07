@@ -16,7 +16,7 @@ RSpec.shared_examples "a convert store" do
   end
 
   it "round-trips a structured (string-keyed) value" do
-    data = {"bucketing" => {"exp" => "var"}, "goals" => {"g1" => true}}
+    data = { "bucketing" => { "exp" => "var" }, "goals" => { "g1" => true } }
     store.set("structured", data)
     expect(store.get("structured")).to eq(data)
   end

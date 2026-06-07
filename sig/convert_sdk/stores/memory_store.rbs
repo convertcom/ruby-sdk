@@ -1,0 +1,15 @@
+module ConvertSdk
+  module Stores
+    # The default in-process store: a plain Hash guarded by a Mutex.
+    class MemoryStore
+      @data: Hash[String, untyped]
+      @mutex: Thread::Mutex
+
+      def initialize: () -> void
+
+      def get: (String key) -> untyped
+
+      def set: (String key, untyped value) -> untyped
+    end
+  end
+end

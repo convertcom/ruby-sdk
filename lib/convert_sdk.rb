@@ -14,6 +14,7 @@ require_relative "convert_sdk/bucketed_feature"
 require_relative "convert_sdk/redactor"
 require_relative "convert_sdk/log_manager"
 require_relative "convert_sdk/http_client"
+require_relative "convert_sdk/stores/memory_store"
 
 module ConvertSdk
   class Error < StandardError; end
