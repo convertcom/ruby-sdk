@@ -39,7 +39,7 @@ RSpec.describe ConvertSdk::DataStoreManager do
       ["a store missing #set", missing_set, false],
       ["a store with wrong arity (still accepted, no arity check)", wrong_arity, true]
     ].each do |desc, candidate, accepted|
-      it "#{accepted ? 'accepts' : 'rejects'} #{desc}" do
+      it "#{accepted ? "accepts" : "rejects"} #{desc}" do
         manager = described_class.new(store: candidate, log_manager: log_manager)
         if accepted
           expect(manager.store).to be(candidate)
@@ -96,10 +96,10 @@ RSpec.describe ConvertSdk::DataStoreManager do
     end
 
     it "lets a config entry and a visitor entry coexist in one store without collision" do
-      manager.set(manager.config_key("SDKKEY"), {"experiences" => []})
-      manager.merge_visitor_data("acc", "proj", "vis") { |_d| {"goals" => {"g1" => true}} }
-      expect(manager.get(manager.config_key("SDKKEY"))).to eq({"experiences" => []})
-      expect(manager.get(manager.visitor_key("acc", "proj", "vis"))).to eq({"goals" => {"g1" => true}})
+      manager.set(manager.config_key("SDKKEY"), { "experiences" => [] })
+      manager.merge_visitor_data("acc", "proj", "vis") { |_d| { "goals" => { "g1" => true } } }
+      expect(manager.get(manager.config_key("SDKKEY"))).to eq({ "experiences" => [] })
+      expect(manager.get(manager.visitor_key("acc", "proj", "vis"))).to eq({ "goals" => { "g1" => true } })
     end
   end
 
@@ -107,38 +107,38 @@ RSpec.describe ConvertSdk::DataStoreManager do
     subject(:manager) { described_class.new(log_manager: log_manager) }
 
     it "deep-merges nested string-keyed hashes (JS objectDeepMerge)" do
-      manager.merge_visitor_data("a", "p", "v") { |_d| {"bucketing" => {"exp1" => "var1"}} }
-      result = manager.merge_visitor_data("a", "p", "v") { |_d| {"bucketing" => {"exp2" => "var2"}} }
-      expect(result).to eq("bucketing" => {"exp1" => "var1", "exp2" => "var2"})
+      manager.merge_visitor_data("a", "p", "v") { |_d| { "bucketing" => { "exp1" => "var1" } } }
+      result = manager.merge_visitor_data("a", "p", "v") { |_d| { "bucketing" => { "exp2" => "var2" } } }
+      expect(result).to eq("bucketing" => { "exp1" => "var1", "exp2" => "var2" })
     end
 
     it "lets scalars from the new partial win" do
-      manager.merge_visitor_data("a", "p", "v") { |_d| {"goals" => {"g1" => false}} }
-      result = manager.merge_visitor_data("a", "p", "v") { |_d| {"goals" => {"g1" => true}} }
-      expect(result).to eq("goals" => {"g1" => true})
+      manager.merge_visitor_data("a", "p", "v") { |_d| { "goals" => { "g1" => false } } }
+      result = manager.merge_visitor_data("a", "p", "v") { |_d| { "goals" => { "g1" => true } } }
+      expect(result).to eq("goals" => { "g1" => true })
     end
 
     it "unions arrays (deduped, new first) like JS" do
-      manager.merge_visitor_data("a", "p", "v") { |_d| {"locations" => %w[x y]} }
-      result = manager.merge_visitor_data("a", "p", "v") { |_d| {"locations" => %w[y z]} }
+      manager.merge_visitor_data("a", "p", "v") { |_d| { "locations" => %w[x y] } }
+      result = manager.merge_visitor_data("a", "p", "v") { |_d| { "locations" => %w[y z] } }
       expect(result["locations"]).to contain_exactly("x", "y", "z")
     end
 
     it "yields the current stored data to the block for atomic check-then-decide" do
-      manager.merge_visitor_data("a", "p", "v") { |_d| {"goals" => {"g1" => true}} }
+      manager.merge_visitor_data("a", "p", "v") { |_d| { "goals" => { "g1" => true } } }
       seen = nil
       manager.merge_visitor_data("a", "p", "v") do |current|
         seen = current
         {}
       end
-      expect(seen).to eq("goals" => {"g1" => true})
+      expect(seen).to eq("goals" => { "g1" => true })
     end
 
     it "does not lose updates under concurrent merges incrementing distinct keys" do
       threads = Array.new(10) do |i|
         Thread.new do
           20.times do |j|
-            manager.merge_visitor_data("a", "p", "v") { |_d| {"goals" => {"g-#{i}-#{j}" => true}} }
+            manager.merge_visitor_data("a", "p", "v") { |_d| { "goals" => { "g-#{i}-#{j}" => true } } }
           end
         end
       end
