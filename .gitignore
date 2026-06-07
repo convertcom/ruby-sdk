@@ -9,3 +9,13 @@
 
 # rspec failure tracking
 .rspec_status
+
+# Gemfile.lock MUST NOT be committed. A single lockfile resolved on one Ruby
+# cannot serve the CRuby 3.1-3.4 + JRuby matrix (transitive dev-dep Ruby floors
+# differ; JRuby needs the universal-java platform). ruby/setup-ruby@v1 with
+# bundler-cache: true runs `bundle lock` per matrix job when no lockfile is
+# present, giving each leg an engine/version-compatible resolution.
+/Gemfile.lock
+
+# Built gem artifacts (gem-smoke job)
+/*.gem

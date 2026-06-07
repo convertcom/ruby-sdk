@@ -1,0 +1,4 @@
+module ConvertSdk
+  class Error < StandardError
+  end
+end

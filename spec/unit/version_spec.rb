@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
-RSpec.describe ConvertSdk do
-  it "has a version number" do
-    expect(ConvertSdk::VERSION).not_to be nil
+RSpec.describe "ConvertSdk::VERSION" do
+  subject(:version) { ConvertSdk::VERSION }
+
+  it "is a non-nil string" do
+    expect(version).to be_a(String)
   end
 
-  it "does something useful" do
-    expect(false).to eq(true)
+  it "is a semantic version (MAJOR.MINOR.PATCH)" do
+    expect(version).to match(/\A\d+\.\d+\.\d+(?:[-+.][0-9A-Za-z.-]+)?\z/)
   end
 end

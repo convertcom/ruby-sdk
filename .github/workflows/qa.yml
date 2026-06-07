@@ -1,0 +1,103 @@
+# IMPORTANT: the workflow name below is LOAD-BEARING. Story 5.4's release.yml
+# triggers on `workflow_run` of a workflow named exactly "Quality Checks".
+# Do not rename.
+name: Quality Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    name: PR title (Conventional Commits)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Validate PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # Dependency-free Conventional Commits check (squash-merge-only repo:
+          # the squash commit subject is the PR title).
+          if ! echo "$PR_TITLE" | grep -qE '^(feat|fix|docs|test|refactor|perf|build|ci|chore)(\(.+\))?!?: .+'; then
+            echo "::error::PR title must follow Conventional Commits: '$PR_TITLE'"
+            echo "Expected: <type>(<scope>)?!?: <description>"
+            echo "Allowed types: feat, fix, docs, test, refactor, perf, build, ci, chore"
+            exit 1
+          fi
+          echo "PR title OK: $PR_TITLE"
+
+  lint:
+    name: Lint (RuboCop)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: RuboCop
+        run: bundle exec rubocop
+
+  typecheck:
+    name: Typecheck (RBS + Steep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: rbs validate
+        run: bundle exec rbs -I sig validate
+      - name: steep check
+        run: bundle exec steep check
+
+  test:
+    name: Test (${{ matrix.ruby }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby:
+          - "3.1"
+          - "3.2"
+          - "3.3"
+          - "3.4"
+          - "jruby"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        # No committed Gemfile.lock: setup-ruby runs `bundle lock` per matrix
+        # leg, resolving an engine/version-compatible dependency set for each
+        # Ruby. No Java/JDK setup for the JRuby leg — setup-ruby self-recovers
+        # to Java 21.
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+      - name: RSpec
+        run: bundle exec rspec
+
+  gem-smoke:
+    name: Gem build / install / require smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: Build, install, require
+        run: |
+          gem build convert_sdk.gemspec
+          gem install ./convert_sdk-*.gem
+          ruby -e "require 'convert_sdk'; raise 'VERSION missing' unless ConvertSdk::VERSION"
