@@ -26,6 +26,7 @@ require_relative "convert_sdk/event_manager"
 require_relative "convert_sdk/fork_guard"
 require_relative "convert_sdk/background_timer"
 require_relative "convert_sdk/data_manager"
+require_relative "convert_sdk/experience_manager"
 require_relative "convert_sdk/context"
 require_relative "convert_sdk/client"
 
