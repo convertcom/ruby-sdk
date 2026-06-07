@@ -62,13 +62,13 @@ module ConvertSdk
     def value_visitor_based(visitor_id, experience_id: "", seed: @hash_seed)
       input = "#{experience_id}#{visitor_id}"
       hash = MurmurHash3.hash(input, seed)
-      val = (hash / @max_hash) * @max_traffic
-      result = val.to_i
+      scaled = (hash / @max_hash) * @max_traffic
+      result = scaled.to_i
 
       @log_manager&.debug(
         "BucketingManager#value_visitor_based: " \
         "experience_id=#{experience_id.inspect} visitor_id=#{visitor_id.inspect} " \
-        "seed=#{seed} hash=#{hash} val=#{val} result=#{result}"
+        "seed=#{seed} hash=#{hash} scaled=#{scaled} result=#{result}"
       )
       result
     end
@@ -91,10 +91,10 @@ module ConvertSdk
       # accumulating in Float mirrors JS exactly. value (Integer) < prev (Float)
       # compares identically to the JS strict upper-bound check.
       prev = 0.0
-      buckets.each do |id, percentage|
+      buckets.each do |variation_id, percentage|
         prev += (percentage.to_f * 100) + redistribute
         if value < prev
-          variation = id
+          variation = variation_id
           break
         end
       end
