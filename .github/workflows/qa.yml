@@ -56,7 +56,11 @@ jobs:
           ruby-version: "3.4"
           bundler-cache: true
       - name: rbs validate
-        run: bundle exec rbs -I sig validate
+        # `-r` loads the stdlib library RBS that the signatures reference (kept in
+        # sync with the Steepfile's `library` declarations). Without these, the
+        # standalone validate can't resolve stdlib types like URI::Generic that
+        # appear in sig/ (e.g. the HTTP port), even though steep resolves them.
+        run: bundle exec rbs -r net-http -r uri -r json -I sig validate
       - name: steep check
         run: bundle exec steep check
 
