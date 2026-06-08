@@ -30,6 +30,12 @@ module ConvertSdk
 
     private
 
+    def guard_fork_boundary: () -> void
+
+    def clear_queue_ownership: () -> void
+
+    def deliver: (Array[Hash[String, untyped]] visitors, String? reason) -> void
+
     def ensure_flush_timer!: () -> void
 
     def flush_tick: () -> void
