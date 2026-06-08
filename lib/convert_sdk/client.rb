@@ -72,6 +72,12 @@ module ConvertSdk
       # thundering-herd fetch mutex, never the config mutex).
       @data_manager.refetch = -> { refresh_config }
       bootstrap_config
+      # Story 4.4 AC#5 — register the PID-guarded at_exit flush ONCE per client
+      # (the gem's ONLY at_exit site; the third and final single-site after the
+      # BackgroundTimer thread-spawn site and the ForkGuard _fork site).
+      # Registering an at_exit handler creates NO thread (NFR4-safe). The test
+      # harness disables live registration (the handler body is tested directly).
+      register_at_exit_flush
     rescue StandardError => e
       # Construction must never crash the host: log and continue config-less.
       @log_manager.error("Client#initialize: #{e.class}: #{e.message}")
@@ -201,7 +207,59 @@ module ConvertSdk
     end
     alias release_queues flush
 
+    # Manually re-arm the SDK after a fork (Story 4.4 AC#4 — frozen API name
+    # +postfork+). The exotic-setup escape hatch: in the default Puma/Unicorn/
+    # Sidekiq deployments the +Process._fork+ hook (ForkGuard) and the PID checks
+    # at flush boundaries detect forks AUTOMATICALLY with zero configuration, so
+    # +postfork+ is rarely needed. It exists for setups that bypass +_fork+
+    # entirely and never reach a flush boundary in time (or integrators who prefer
+    # an explicit +on_worker_boot+/+after_fork+ call, LaunchDarkly-style).
+    #
+    # Delegates to the SAME {ForkGuard.rearm!} path as automatic detection: marks
+    # both registered timers dead (lazy re-arm on next use), clears queue
+    # ownership in this process, and resets the owning PID. Idempotent (calling it
+    # in the owning process simply resets owner_pid to the current PID and
+    # re-fires the harmless clears). Never raises into the host (NFR9).
+    #
+    # @return [self]
+    def postfork
+      ForkGuard.rearm!
+      self
+    rescue StandardError => e
+      @log_manager.error("Client#postfork: #{e.class}: #{e.message}")
+      self
+    end
+
     private
+
+    # Story 4.4 AC#5 — capture the registering PID and register the gem's single
+    # at_exit handler (the Split-gem ROOT_PROCESS_ID pattern). Skipped under the
+    # test harness (+ConvertSdk.at_exit_registration_enabled?+ is false there) so
+    # specs never register a live handler that would fire flush at suite exit.
+    # Registering an at_exit handler creates no thread (NFR4-safe).
+    def register_at_exit_flush
+      @at_exit_pid = Process.pid
+      return unless ConvertSdk.at_exit_registration_enabled?
+
+      at_exit { run_at_exit_flush }
+    end
+
+    # The at_exit handler body (Story 4.4 AC#5). PID-guarded: it flushes ONLY in
+    # the process that registered it — a forked child that inherited the handler
+    # is suppressed (its events belong to the child's own lifecycle, and the
+    # parent flushes the parent's). Best-effort: it does not run under SIGKILL
+    # (Lambda) — that path relies on the size/interval triggers. Never raises at
+    # exit (a raise during interpreter teardown is especially hostile).
+    def run_at_exit_flush
+      if Process.pid == @at_exit_pid
+        @log_manager.debug("Client#run_at_exit_flush: registering process exiting, flushing")
+        @api_manager.release_queue("exit")
+      else
+        @log_manager.debug("Client#run_at_exit_flush: suppressed in forked child (pid mismatch)")
+      end
+    rescue StandardError => e
+      @log_manager.error("Client#run_at_exit_flush: #{e.class}: #{e.message}")
+    end
 
     # Build the config-refresh BackgroundTimer bound to +data_refresh_interval+
     # and register it with ForkGuard (so a forked child marks it dead and the

@@ -58,6 +58,26 @@ module ConvertSdk
   # from {Config}. This type exists only as a namespace anchor.
   class Error < StandardError; end
 
+  # Whether {Client} registers its PID-guarded +at_exit+ flush handler at
+  # construction (Story 4.4 AC#5). Always +true+ in production. The TEST HARNESS
+  # alone flips this off (a +spec/support+ hook) so unit specs that build clients
+  # do NOT register live +at_exit+ handlers — which would fire +flush+ during
+  # RSpec suite teardown. The handler BODY is unit-tested directly via
+  # +Client#run_at_exit_flush+; the live-registration path is proven end-to-end
+  # in a SUBPROCESS in spec/integration/fork_safety_spec.rb.
+  # @return [Boolean]
+  def self.at_exit_registration_enabled?
+    @at_exit_registration_enabled = true unless defined?(@at_exit_registration_enabled)
+    @at_exit_registration_enabled
+  end
+
+  # Set the {at_exit_registration_enabled?} flag (test harness only).
+  # @param value [Boolean]
+  # @return [Boolean]
+  def self.at_exit_registration_enabled=(value)
+    @at_exit_registration_enabled = value
+  end
+
   # Build an SDK client from an SDK key (live config fetch) or a pre-fetched
   # +data:+ object (direct data mode). THE public entry point.
   #
