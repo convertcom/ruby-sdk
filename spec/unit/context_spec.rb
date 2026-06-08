@@ -530,4 +530,145 @@ RSpec.describe ConvertSdk::Context do
       expect(fired).to be_empty
     end
   end
+
+  # --- Story 4.3: track_conversion (conversion + revenue + dedup) -----------
+
+  describe "#track_conversion (AC#1-4)" do
+    let(:http_client) { ConvertSdk::HttpClient.new(log_manager: log_manager, open_timeout: 1, read_timeout: 1) }
+    # A real ApiManager (timer-off so no background flush during the example);
+    # the enqueued event is inspected by draining the underlying queue.
+    let(:api_manager) do
+      cfg = ConvertSdk::Config.new(
+        data: ConfigFixture.config["data"], sdk_key: "sdk-key-1",
+        track_endpoint: "https://track.example.test/[project_id]/v1",
+        flush_interval: nil, log_manager: log_manager
+      )
+      ConvertSdk::ApiManager.new(
+        config: cfg, data_manager: data_manager, http_client: http_client,
+        event_manager: event_manager, log_manager: log_manager
+      )
+    end
+
+    let(:goal_key) { "increase-engagement" }
+    let(:goal_id) { "100215960" }
+
+    def conv_context(visitor_id: "visitor-conv")
+      build_context(visitor_id: visitor_id, api_manager: api_manager)
+    end
+
+    # The single drained conversion event (or nil when the queue is empty).
+    def drained_conversion_event
+      visitors = api_manager.queue.drain!
+      events = visitors.flat_map { |v| v["events"] }
+      events.find { |e| e["eventType"] == "conversion" }
+    end
+
+    describe "enqueued conversion event shape (AC#1, #4)" do
+      it "enqueues a wire-shaped conversion event with goalId" do
+        conv_context.track_conversion(goal_key)
+        event = drained_conversion_event
+        expect(event["eventType"]).to eq("conversion")
+        expect(event["data"]["goalId"]).to eq(goal_id)
+      end
+
+      it "carries goalData as [{key,value}] pairs (golden, field-by-field)" do
+        conv_context.track_conversion(goal_key, goal_data: { amount: 49.99, transaction_id: "tx-9" })
+        event = drained_conversion_event
+        expect(event).to eq(
+          "eventType" => "conversion",
+          "data" => {
+            "goalId" => goal_id,
+            "goalData" => [
+              { "key" => "amount", "value" => 49.99 },
+              { "key" => "transactionId", "value" => "tx-9" }
+            ]
+          }
+        )
+      end
+
+      it "omits goalData when no revenue data is supplied" do
+        conv_context.track_conversion(goal_key)
+        expect(drained_conversion_event["data"]).not_to have_key("goalData")
+      end
+
+      it "includes bucketingData from the visitor's stored bucketing map" do
+        data_store_manager.merge_visitor_data(
+          ConfigFixture.account_id, ConfigFixture.project_id, "vis-bkt"
+        ) { |_c| { "bucketing" => { "100" => "200" } } }
+        conv_context(visitor_id: "vis-bkt").track_conversion(goal_key)
+        expect(drained_conversion_event["data"]["bucketingData"]).to eq({ "100" => "200" })
+      end
+
+      it "omits bucketingData for an unbucketed visitor (JS parity)" do
+        conv_context.track_conversion(goal_key)
+        expect(drained_conversion_event["data"]).not_to have_key("bucketingData")
+      end
+    end
+
+    describe "dedup (AC#2) + force (AC#3) through the public surface" do
+      it "enqueues only ONE conversion across two non-forced tracks for the same goal" do
+        ctx = conv_context
+        ctx.track_conversion(goal_key)
+        ctx.track_conversion(goal_key)
+        visitors = api_manager.queue.drain!
+        conversions = visitors.flat_map { |v| v["events"] }.select { |e| e["eventType"] == "conversion" }
+        expect(conversions.size).to eq(1)
+      end
+
+      it "enqueues a second conversion when force_multiple_transactions is true" do
+        ctx = conv_context
+        ctx.track_conversion(goal_key)
+        ctx.track_conversion(goal_key, force_multiple_transactions: true)
+        visitors = api_manager.queue.drain!
+        conversions = visitors.flat_map { |v| v["events"] }.select { |e| e["eventType"] == "conversion" }
+        expect(conversions.size).to eq(2)
+      end
+
+      it "does not enqueue on an unknown goal key" do
+        conv_context.track_conversion("no-such-goal")
+        expect(drained_conversion_event).to be_nil
+      end
+    end
+
+    describe "CONVERSION system event (AC#4)" do
+      it "fires SystemEvents::CONVERSION on a successful track" do
+        fired = []
+        event_manager.on(ConvertSdk::SystemEvents::CONVERSION) { |payload, _err| fired << payload }
+        conv_context.track_conversion(goal_key)
+        expect(fired.size).to eq(1)
+        expect(fired.first).to include(visitor_id: "visitor-conv", goal_key: goal_key)
+      end
+
+      it "fires deferred so a LATE subscriber still receives the replay (deferred: true)" do
+        conv_context(visitor_id: "v-late").track_conversion(goal_key)
+        replayed = []
+        # Subscribing AFTER the fire must still deliver the conversion payload.
+        event_manager.on(ConvertSdk::SystemEvents::CONVERSION) { |payload, _err| replayed << payload }
+        expect(replayed.size).to eq(1)
+        expect(replayed.first).to include(visitor_id: "v-late", goal_key: goal_key)
+      end
+
+      it "fires CONVERSION only on the successful track, not on the deduplicated repeat" do
+        fired = []
+        # Subscribed BEFORE any track → counts live fires (not deferred replays).
+        event_manager.on(ConvertSdk::SystemEvents::CONVERSION) { |payload, _err| fired << payload }
+        ctx = conv_context
+        ctx.track_conversion(goal_key) # success → fires
+        ctx.track_conversion(goal_key) # deduplicated → no fire
+        expect(fired.size).to eq(1)
+      end
+    end
+
+    describe "never-crash boundary (NFR9)" do
+      it "returns self and error-logs when a collaborator raises" do
+        raising = instance_double(ConvertSdk::DataManager)
+        allow(raising).to receive(:ensure_fresh_config!).and_raise(StandardError, "boom")
+        ctx = build_context(api_manager: api_manager, data_manager: raising)
+        result = nil
+        expect { result = ctx.track_conversion(goal_key) }.not_to raise_error
+        expect(result).to eq(ctx)
+        expect(sink.joined).to include("Context#track_conversion")
+      end
+    end
+  end
 end
