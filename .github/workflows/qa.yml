@@ -128,6 +128,40 @@ jobs:
       - name: RSpec (parity suite only)
         run: bundle exec rspec spec/cross_sdk
 
+  full-chain:
+    name: Full-chain release gate
+    runs-on: ubuntu-latest
+    # The release-blocking end-to-end gate (Story 4.7, FR64 / NFR5). Runs the
+    # full-chain spec STANDALONE and as its OWN job so it is independent of the
+    # `test` job: a coverage failure in `test` can never mask a wiring or
+    # zero-leakage regression, and vice versa. One deterministic scenario asserts
+    # the whole loop (create -> decide -> track -> flush), the exact wire bytes
+    # field-by-field, the UA + Bearer header invariants on BOTH endpoints, and
+    # zero raw-secret leakage at TRACE.
+    #
+    # Pinned to one CRuby (3.4 — matching the other single-Ruby jobs). The
+    # cross-ENGINE guarantee is already covered by the matrix `test` job, which
+    # also executes spec/integration on every Ruby including JRuby.
+    #
+    # Excludes the :typecheck group (rbs/steep) — this gate needs neither, and the
+    # group is isolated precisely so jobs can opt out of the C-extension build.
+    # DISABLE_COVERAGE: this job runs only spec/integration/full_chain_spec.rb and
+    # is independent of coverage — coverage is enforced by the full-suite `test`
+    # job. Opting out stops the global 85% line gate from being applied to this
+    # deliberately-narrow single spec (see spec/spec_helper.rb).
+    env:
+      BUNDLE_WITHOUT: typecheck
+      DISABLE_COVERAGE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: RSpec (full-chain release gate only)
+        run: bundle exec rspec spec/integration/full_chain_spec.rb
+
   gem-smoke:
     name: Gem build / install / require smoke
     runs-on: ubuntu-latest
