@@ -19,7 +19,7 @@ Gem::Specification.new do |spec|
   spec.metadata["homepage_uri"] = spec.homepage
   spec.metadata["source_code_uri"] = "https://github.com/convertcom/ruby-sdk"
   spec.metadata["changelog_uri"] = "https://github.com/convertcom/ruby-sdk/releases"
-  spec.metadata["documentation_uri"] = "https://convertcom.github.io/ruby-sdk"
+  spec.metadata["documentation_uri"] = "https://github.com/convertcom/ruby-sdk/wiki"
   spec.metadata["rubygems_mfa_required"] = "true"
 
   # Specify which files should be added to the gem when it is released.
