@@ -360,7 +360,85 @@ module ConvertSdk
       nil
     end
 
+    # Track a conversion for this visitor on +goal_key+ with optional revenue /
+    # transaction data, deduplicated per visitor per goal (FR31-FR35).
+    #
+    # The dedup decision + atomic mark live in {DataManager#convert} (the store
+    # merge lock makes check-then-mark one atomic op — the Android qs-01 fix);
+    # this surface wraps the returned wire-shaped +data+ hash into the
+    # +{eventType:'conversion', data:{...}}+ envelope (co-located with the
+    # bucketing-event construction site for consistency), enqueues it through the
+    # {ApiManager} (per-visitor merge, non-blocking — NFR2), and fires the
+    # {SystemEvents::CONVERSION} lifecycle event with +deferred: true+ so a
+    # listener that subscribes AFTER the call still receives the replay (JS
+    # context.ts:416-424). When the conversion is deduplicated or the goal key is
+    # unknown, {DataManager#convert} returns +nil+: no event is enqueued and
+    # CONVERSION does NOT fire.
+    #
+    #   context.track_conversion("purchase", goal_data: { amount: 49.99, transaction_id: "tx-1" })
+    #
+    # +force_multiple_transactions: true+ bypasses the dedup check (a legitimate
+    # repeat transaction is enqueued) without re-marking the goal — see
+    # {DataManager#convert}.
+    #
+    # +goal_data+ accepts the eight {GoalDataKey} platform keys in snake_case
+    # symbol form (+amount:+, +products_count:+, +transaction_id:+,
+    # +custom_dimension_1:+ … +custom_dimension_5:+); unknown keys are rejected
+    # (debug-logged) and emitted as +[{key, value}]+ wire pairs.
+    #
+    # Never raises into the host: an internal failure degrades to an +error+ log
+    # and returns +self+ (NFR9).
+    #
+    # @param goal_key [String] the goal +key+ to convert on.
+    # @param goal_data [Hash, nil] optional revenue/transaction data (snake_case
+    #   symbol keys of the eight platform keys).
+    # @param force_multiple_transactions [Boolean] bypass the per-goal dedup check.
+    # @return [self]
+    def track_conversion(goal_key, goal_data: nil, force_multiple_transactions: false)
+      @data_manager.ensure_fresh_config!
+      data = @data_manager.convert(
+        @visitor_id, goal_key,
+        goal_data: goal_data,
+        force_multiple_transactions: force_multiple_transactions
+      )
+      fire_conversion(goal_key, data) unless data.nil?
+      self
+    rescue StandardError => e
+      @log_manager.error("Context#track_conversion: #{e.class}: #{e.message}")
+      self
+    end
+
     private
+
+    # The single conversion seam (mirrors {#fire_bucketing}): enqueue the
+    # wire-shaped event THEN fire the lifecycle event with +deferred: true+ (late
+    # subscribers replay — JS context.ts:416-424). Fired on SUCCESS only (the
+    # caller skips this when {DataManager#convert} returned nil).
+    def fire_conversion(goal_key, data)
+      enqueue_conversion_event(data)
+      @event_manager.fire(
+        SystemEvents::CONVERSION,
+        { visitor_id: @visitor_id, goal_key: goal_key },
+        nil,
+        deferred: true
+      )
+    end
+
+    # Wrap the {DataManager#convert} wire-shaped +data+ hash into the conversion
+    # event envelope and enqueue it (no-op when no {ApiManager} is wired).
+    # Co-located with {#enqueue_bucketing_event}: both wire-shape at construction
+    # time; the ApiManager remains the only payload BUILDER. The visitor's stored
+    # report-segments ride the queue's first entry (passed nil when empty so the
+    # wire entry omits +segments+) — same convention as the bucketing event.
+    def enqueue_conversion_event(data)
+      manager = @api_manager
+      return if manager.nil?
+
+      event = { "eventType" => SystemEvents::CONVERSION, "data" => data }
+      stored_segments = get_visitor_data["segments"]
+      segments = stored_segments.is_a?(Hash) && !stored_segments.empty? ? stored_segments : nil
+      manager.enqueue(@visitor_id, event, segments: segments)
+    end
 
     # Build the visitor properties the segment rules match against — JS
     # +getVisitorProperties+ (+context.ts:569-577+): the stored segments deep-merged
