@@ -189,9 +189,17 @@ module ConvertSdk
     # Never raises into the host: an internal failure degrades to
     # {RuleError::NO_DATA_FOUND} + an +error+ log (NFR9).
     #
+    # == Tracking control (Story 4.5)
+    #
+    # +attributes[:enable_tracking]+ (or +"enable_tracking"+) is the per-call
+    # tracking switch (snake_case of the JS +BucketingAttributes.enableTracking+).
+    # When +false+ THIS call still decides and still persists sticky StoreData, but
+    # NO bucketing event is enqueued (a +debug+ line records the suppression). The
+    # global Config +tracking: false+ switch ALWAYS wins over a per-call +true+.
+    #
     # @param key [String] the experience +key+.
     # @param attributes [Hash, nil] optional per-call visitor properties merged
-    #   over the context attributes (deep-stringified).
+    #   over the context attributes (deep-stringified). May carry +:enable_tracking+.
     # @return [BucketedVariation, Sentinel] a frozen variation or a sentinel miss.
     def run_experience(key, attributes = nil)
       manager = @experience_manager
@@ -199,7 +207,7 @@ module ConvertSdk
 
       @data_manager.ensure_fresh_config!
       variation = manager.select_variation(@visitor_id, key, decision_attributes(attributes))
-      fire_bucketing(key, variation) unless variation.is_a?(Sentinel)
+      fire_bucketing(key, variation, track: tracking_enabled_for_call?(attributes)) unless variation.is_a?(Sentinel)
       variation
     rescue StandardError => e
       @log_manager.error("Context#run_experience: #{e.class}: #{e.message}")
@@ -218,8 +226,12 @@ module ConvertSdk
     # Never raises into the host: an internal failure degrades to +[]+ + an
     # +error+ log (NFR9).
     #
+    # +attributes[:enable_tracking] == false+ suppresses the per-variation bucketing
+    # enqueue for THIS call (decisioning + sticky writes unaffected); the global
+    # Config +tracking: false+ switch always wins (Story 4.5).
+    #
     # @param attributes [Hash, nil] optional per-call visitor properties merged
-    #   over the context attributes (deep-stringified).
+    #   over the context attributes (deep-stringified). May carry +:enable_tracking+.
     # @return [Array<BucketedVariation>] the frozen variations (misses excluded).
     def run_experiences(attributes = nil)
       manager = @experience_manager
@@ -227,7 +239,8 @@ module ConvertSdk
 
       @data_manager.ensure_fresh_config!
       variations = manager.select_variations(@visitor_id, decision_attributes(attributes))
-      variations.each { |variation| fire_bucketing(variation.experience_key, variation) }
+      track = tracking_enabled_for_call?(attributes)
+      variations.each { |variation| fire_bucketing(variation.experience_key, variation, track: track) }
       variations
     rescue StandardError => e
       @log_manager.error("Context#run_experiences: #{e.class}: #{e.message}")
@@ -395,6 +408,16 @@ module ConvertSdk
     # @param force_multiple_transactions [Boolean] bypass the per-goal dedup check.
     # @return [self]
     def track_conversion(goal_key, goal_data: nil, force_multiple_transactions: false)
+      # Story 4.5 — the global tracking gate sits BEFORE DataManager#convert so a
+      # suppressed conversion neither enqueues NOR marks dedup (the goals[goalId]
+      # mark lives inside #convert's atomic dedup-and-mark). A subsequent same-goal
+      # call therefore stays unblocked until tracking is re-enabled. Return value
+      # is unchanged (self); no sentinel.
+      unless @config.tracking
+        @log_manager.debug("Context#track_conversion: tracking disabled, event suppressed")
+        return self
+      end
+
       @data_manager.ensure_fresh_config!
       data = @data_manager.convert(
         @visitor_id, goal_key,
@@ -490,17 +513,52 @@ module ConvertSdk
     #    data-manager.ts:692-694); an empty segments map is passed as +nil+ so the
     #    wire entry omits the +segments+ key entirely.
     #
-    # Keep this the SOLE enqueue site (Story 4.5 attaches per-call tracking-control
-    # hooks here). Contained — a raising listener never crosses back (EventManager
+    # The SOLE bucketing enqueue site. The {SystemEvents::BUCKETING} LIFECYCLE event
+    # ALWAYS fires (it is decisioning observability, not tracking — a host listener
+    # may need to react to the decision even under consent denial); only the
+    # outbound ENQUEUE is gated by the tracking switch (Story 4.5). +track+ is the
+    # composed verdict ({#tracking_enabled_for_call?} — global AND per-call); when +false+
+    # the wire enqueue is suppressed with a +debug+ line and stickiness/decisioning
+    # are untouched. Contained — a raising listener never crosses back (EventManager
     # swallows it); the enqueue is pure in-memory and inert when no ApiManager is wired.
-    def fire_bucketing(experience_key, variation)
+    def fire_bucketing(experience_key, variation, track: true)
       @event_manager.fire(
         SystemEvents::BUCKETING,
         { visitor_id: @visitor_id, experience_key: experience_key, variation_key: variation.key },
         nil,
         deferred: true
       )
+      return if suppress_bucketing_enqueue?(track)
+
       enqueue_bucketing_event(variation)
+    end
+
+    # The composed tracking verdict for THIS bucketing enqueue: suppressed when the
+    # global Config switch is off OR the per-call +track+ flag is false. Emits the
+    # matching +debug+ suppression line (global vs per-call) so every suppressed
+    # enqueue is observable (FR56). Returns true when the enqueue must be skipped.
+    def suppress_bucketing_enqueue?(track)
+      unless @config.tracking
+        @log_manager.debug("Context#run_experience: tracking disabled, event suppressed")
+        return true
+      end
+      unless track
+        @log_manager.debug("Context#run_experience: tracking suppressed for call")
+        return true
+      end
+      false
+    end
+
+    # Read the per-call +enable_tracking+ switch from the per-call attributes
+    # (symbol or string key; the public boundary accepts both — FR11). Absent =>
+    # +true+ (tracking on by default). Only +false+ (an explicit per-call opt-out)
+    # suppresses; any other value leaves tracking on. The global Config switch is
+    # composed separately in {#suppress_bucketing_enqueue?} (global-off always wins).
+    def tracking_enabled_for_call?(attributes)
+      return true unless attributes.is_a?(Hash)
+
+      value = attributes.fetch(:enable_tracking) { attributes.fetch("enable_tracking", true) }
+      value != false
     end
 
     # Enqueue the wire-shaped bucketing event for the decided variation (no-op when
