@@ -19,3 +19,10 @@
 
 # Built gem artifacts (gem-smoke job)
 /*.gem
+
+# Node release tooling (semantic-release) is DEV-ONLY and runs on the CI runner.
+# package.json / release.config.mjs ARE committed (they configure the release
+# pipeline), but the installed dependency tree and the resolved lockfile must
+# never be committed — the gem keeps zero runtime deps and ships no Node files.
+/node_modules/
+/package-lock.json
