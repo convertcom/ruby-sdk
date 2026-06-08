@@ -12,6 +12,7 @@ RSpec.describe ConvertSdk::Context do
   let(:bucketing_manager) { ConvertSdk::BucketingManager.new(config: config, log_manager: log_manager) }
   let(:rule_manager) { ConvertSdk::RuleManager.new(config: config, log_manager: log_manager) }
   let(:experience_manager) { ConvertSdk::ExperienceManager.new(data_manager: data_manager, log_manager: log_manager) }
+  let(:feature_manager) { ConvertSdk::FeatureManager.new(data_manager: data_manager, log_manager: log_manager) }
 
   # A DataManager loaded with the vendored fixture (direct-data install) so the
   # config readers behind get_config_entity return real entities. Wired with the
@@ -48,7 +49,8 @@ RSpec.describe ConvertSdk::Context do
       event_manager: overrides.fetch(:event_manager, event_manager),
       log_manager: overrides.fetch(:log_manager, log_manager),
       config: overrides.fetch(:config, config),
-      experience_manager: overrides.fetch(:experience_manager, experience_manager)
+      experience_manager: overrides.fetch(:experience_manager, experience_manager),
+      feature_manager: overrides.fetch(:feature_manager, feature_manager)
     )
   end
 
@@ -336,6 +338,100 @@ RSpec.describe ConvertSdk::Context do
       ctx = build_context(data_manager: raising)
       expect(ctx.get_config_entity("k", :experience)).to be_nil
       expect(sink.joined).to include("Context#get_config_entity")
+    end
+  end
+
+  describe "#run_feature (Story 3.1 — AC#1,#3,#4,#5)" do
+    # visitor-1 + these attributes buckets into fullstack-2 (var 100299457) AND
+    # fullstack-3 (var 100299461), both carrying feature-1 (10024). feature-2
+    # (10025) is carried by no bucketed variation. Verified against the fixture.
+    let(:matching) { { "varName1" => "value1", "varName2" => "value2" } }
+
+    def ctx(attributes: nil)
+      build_context(visitor_id: "visitor-1", attributes: attributes)
+    end
+
+    it "returns ENABLED feature(s) for a feature carried by the visitor's bucketed variation(s)" do
+      result = ctx(attributes: matching.merge("environment" => "staging")).run_feature("feature-1")
+      # feature-1 sits in TWO bucketed variations -> an Array of ENABLED features.
+      features = Array(result)
+      expect(features).to all(be_a(ConvertSdk::BucketedFeature))
+      expect(features).to all(have_attributes(status: ConvertSdk::FeatureStatus::ENABLED))
+      expect(features.map(&:key).uniq).to eq(["feature-1"])
+    end
+
+    it "merges per-call attributes over context attributes (deep-stringified)" do
+      result = ctx(attributes: { "environment" => "staging" })
+               .run_feature("feature-1", varName1: "value1", varName2: "value2")
+      expect(Array(result)).to all(have_attributes(status: ConvertSdk::FeatureStatus::ENABLED))
+    end
+
+    it "returns a DISABLED BucketedFeature (declared, not bucketed) with a debug log on a miss" do
+      result = ctx(attributes: { "environment" => "staging" })
+               .run_feature("feature-1", varName1: "no", varName2: "no")
+      expect(result).to be_a(ConvertSdk::BucketedFeature)
+      expect(result.status).to eq(ConvertSdk::FeatureStatus::DISABLED)
+      expect(result.key).to eq("feature-1")
+    end
+
+    it "returns a DISABLED BucketedFeature (key only) for an undeclared feature" do
+      result = ctx(attributes: matching.merge("environment" => "staging")).run_feature("no-such-feature")
+      expect(result).to be_a(ConvertSdk::BucketedFeature)
+      expect(result.status).to eq(ConvertSdk::FeatureStatus::DISABLED)
+      expect(result.key).to eq("no-such-feature")
+      expect(result.id).to be_nil
+    end
+
+    it "never raises — a raising feature_manager degrades to a DISABLED feature + error log" do
+      raising = instance_double(ConvertSdk::FeatureManager)
+      allow(raising).to receive(:run_feature).and_raise(StandardError, "boom")
+      c = build_context(attributes: { "environment" => "staging" }, feature_manager: raising)
+      result = nil
+      expect { result = c.run_feature("feature-1") }.not_to raise_error
+      expect(result).to be_a(ConvertSdk::BucketedFeature)
+      expect(result.status).to eq(ConvertSdk::FeatureStatus::DISABLED)
+      expect(sink.joined).to include("Context#run_feature")
+    end
+
+    it "performs ZERO HTTP on the cached-config evaluation (NFR1)" do
+      ctx(attributes: matching.merge("environment" => "staging")).run_feature("feature-1")
+      expect(a_request(:any, /.*/)).not_to have_been_made
+    end
+  end
+
+  describe "#run_features (Story 3.1 — AC#2,#4,#5)" do
+    let(:matching) { { "varName1" => "value1", "varName2" => "value2" } }
+
+    def ctx(attributes: nil)
+      build_context(visitor_id: "visitor-1", attributes: attributes)
+    end
+
+    it "returns every declared feature (ENABLED for carried, DISABLED otherwise)" do
+      results = ctx(attributes: matching.merge("environment" => "staging")).run_features
+      expect(results).to all(be_a(ConvertSdk::BucketedFeature))
+      statuses = results.group_by(&:key).transform_values { |fs| fs.map(&:status).uniq }
+      expect(statuses["feature-1"]).to include(ConvertSdk::FeatureStatus::ENABLED)
+      expect(statuses["feature-2"]).to eq([ConvertSdk::FeatureStatus::DISABLED])
+    end
+
+    it "returns all DISABLED when the visitor is bucketed nowhere" do
+      results = ctx(attributes: { "environment" => "staging" }).run_features(varName1: "no", varName2: "no")
+      expect(results).to all(have_attributes(status: ConvertSdk::FeatureStatus::DISABLED))
+    end
+
+    it "never raises — a raising feature_manager degrades to an empty list + error log" do
+      raising = instance_double(ConvertSdk::FeatureManager)
+      allow(raising).to receive(:run_features).and_raise(StandardError, "boom")
+      c = build_context(attributes: { "environment" => "staging" }, feature_manager: raising)
+      result = nil
+      expect { result = c.run_features }.not_to raise_error
+      expect(result).to eq([])
+      expect(sink.joined).to include("Context#run_features")
+    end
+
+    it "performs ZERO HTTP on the cached-config evaluation (NFR1)" do
+      ctx(attributes: matching.merge("environment" => "staging")).run_features
+      expect(a_request(:any, /.*/)).not_to have_been_made
     end
   end
 end
