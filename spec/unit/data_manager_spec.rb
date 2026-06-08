@@ -314,7 +314,7 @@ RSpec.describe ConvertSdk::DataManager do
   let(:store_key) { dsm.visitor_key(data["account_id"], data["project"]["id"], conv_visitor) }
 
   # The persisted goals map for the conversion visitor (or {} when none).
-  def stored_goals(manager_unused = nil)
+  def stored_goals
     (store.get(store_key) || {})["goals"] || {}
   end
 
