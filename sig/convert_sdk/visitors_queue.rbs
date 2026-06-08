@@ -16,9 +16,13 @@ module ConvertSdk
 
     def drain!: () -> Array[Hash[String, untyped]]
 
+    def requeue: (Array[Hash[String, untyped]] visitors) -> void
+
     def size: () -> Integer
 
     private
+
+    def merge_drained: (Hash[String, untyped] drained) -> void
 
     def trim_to_cap: () -> void
   end
