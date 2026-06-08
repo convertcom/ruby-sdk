@@ -61,8 +61,12 @@ module ConvertSdk
     # @param experience_manager [ExperienceManager, nil] the variation-selection
     #   surface backing {#run_experience}/{#run_experiences} (Story 2.11). nil
     #   leaves the shell decisioning-less (the 2.8 lookup-only construction).
+    # @param feature_manager [FeatureManager, nil] the feature-resolution +
+    #   typed-variable-casting surface backing {#run_feature}/{#run_features}
+    #   (Story 3.1). nil leaves the feature methods miss-only (no decisioning).
     def initialize(visitor_id:, data_manager:, data_store_manager:, event_manager:,
-                   log_manager:, config:, attributes: nil, experience_manager: nil)
+                   log_manager:, config:, attributes: nil, experience_manager: nil,
+                   feature_manager: nil)
       @visitor_id = visitor_id
       @data_manager = data_manager
       @data_store_manager = data_store_manager
@@ -70,6 +74,7 @@ module ConvertSdk
       @log_manager = log_manager
       @config = config
       @experience_manager = experience_manager
+      @feature_manager = feature_manager
       # Deep-stringify the caller's attributes ONCE at the boundary; internals
       # only ever see string keys. nil → empty. The caller's hash is never mutated.
       @attributes = deep_stringify(attributes || {})
@@ -221,7 +226,83 @@ module ConvertSdk
       []
     end
 
+    # Evaluate a SINGLE feature flag for this visitor with typed variables (FR24).
+    #
+    # The feature resolves THROUGH experience bucketing (FR26): it is ENABLED
+    # exactly when the visitor is bucketed (via the Story 2.11 decision flow) into
+    # a variation carrying that feature, and its variables arrive cast to their
+    # declared types (FR27 — see {FeatureManager#cast_type}). On a hit a frozen
+    # {BucketedFeature} (+status: enabled+) is returned; when the same feature is
+    # carried by SEVERAL bucketed variations an Array of enabled {BucketedFeature}s
+    # is returned (JS +runFeature+ parity). On a miss — feature undeclared, or the
+    # visitor bucketed into no carrying variation — a frozen DISABLED
+    # {BucketedFeature} is returned, never an exception (AC#5).
+    #
+    # Branch on +#status+ (never an error sentinel):
+    #
+    #   feature = context.run_feature("new-checkout")
+    #   if feature.status == ConvertSdk::FeatureStatus::ENABLED
+    #     render_new_checkout(feature.variables["headline"])
+    #   else
+    #     render_legacy_checkout
+    #   end
+    #
+    # NOTE (accepted parity break): JS +runFeature+ accepts an optional
+    # +experienceKeys+ filter argument; this Ruby surface intentionally OMITS it
+    # (deferred feature). Resolution always spans all configured experiences.
+    #
+    # Never raises into the host: an internal failure degrades to a DISABLED
+    # {BucketedFeature} (carrying the requested key) + an +error+ log (NFR9).
+    #
+    # @param key [String] the feature +key+ to evaluate.
+    # @param attributes [Hash, nil] optional per-call visitor properties merged
+    #   over the context attributes (deep-stringified).
+    # @return [BucketedFeature, Array<BucketedFeature>] the resolved feature(s).
+    def run_feature(key, attributes = nil)
+      manager = @feature_manager
+      return disabled_feature(key) if manager.nil?
+
+      @data_manager.ensure_fresh_config!
+      manager.run_feature(@visitor_id, key, decision_attributes(attributes))
+    rescue StandardError => e
+      @log_manager.error("Context#run_feature: #{e.class}: #{e.message}")
+      disabled_feature(key)
+    end
+
+    # Evaluate ALL declared feature flags for this visitor with typed variables
+    # (FR25). Returns the full feature roster: every feature carried by a variation
+    # the visitor was bucketed into is ENABLED (variables cast to declared types);
+    # every other declared feature is DISABLED (JS +runFeatures+ parity, no feature
+    # filter). Misses never surface as exceptions or error sentinels.
+    #
+    #   context.run_features.each do |feature|
+    #     toggle(feature.key, on: feature.status == ConvertSdk::FeatureStatus::ENABLED)
+    #   end
+    #
+    # Never raises into the host: an internal failure degrades to +[]+ + an
+    # +error+ log (NFR9).
+    #
+    # @param attributes [Hash, nil] optional per-call visitor properties merged
+    #   over the context attributes (deep-stringified).
+    # @return [Array<BucketedFeature>] the resolved features (enabled + disabled).
+    def run_features(attributes = nil)
+      manager = @feature_manager
+      return [] if manager.nil?
+
+      @data_manager.ensure_fresh_config!
+      manager.run_features(@visitor_id, decision_attributes(attributes))
+    rescue StandardError => e
+      @log_manager.error("Context#run_features: #{e.class}: #{e.message}")
+      []
+    end
+
     private
+
+    # A frozen DISABLED {BucketedFeature} carrying the requested key — the miss /
+    # internal-failure return for {#run_feature} (never an exception, AC#5).
+    def disabled_feature(key)
+      BucketedFeature.new(key: key, status: FeatureStatus::DISABLED)
+    end
 
     # Build the bucketing-attributes hash for the decision flow: the context
     # attributes deep-merged with the deep-stringified per-call attributes
