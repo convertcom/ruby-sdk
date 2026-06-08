@@ -8,10 +8,12 @@ ARG RUBY_VERSION=3.3
 FROM ruby:${RUBY_VERSION}-slim
 
 # Minimal build deps: a C toolchain for native gems Rails pulls in (e.g. nokogiri
-# may need it depending on the resolved set). No database client libs — the demo
-# has no DB.
+# may need it depending on the resolved set), plus pkg-config + libyaml-dev so the
+# psych gem's native extension can compile (it needs yaml.h — without libyaml-dev
+# `bundle install` fails with "yaml.h not found"). No database client libs — the
+# demo has no DB.
 RUN apt-get update -qq \
-  && apt-get install --no-install-recommends -y build-essential git \
+  && apt-get install --no-install-recommends -y build-essential git pkg-config libyaml-dev \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

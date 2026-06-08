@@ -15,3 +15,8 @@
 
 # Demo runtime / build artifacts
 *.gem
+
+# Never commit real env/secrets; keep the example tracked.
+/.env
+/.env.*
+!/.env.example

@@ -200,9 +200,14 @@ end
 # =============================================================================
 
 # GET a path on the demo, returning the parsed JSON body (or nil on failure).
+# Sends `Accept: application/json` so /demo (which content-negotiates HTML by
+# default for humans) returns its JSON shape to the smoke — the smoke is a
+# machine client, not a browser.
 def get_json(base, path)
   uri = URI.join(base, path)
-  res = Timeout.timeout(REQUEST_TIMEOUT) { Net::HTTP.get_response(uri) }
+  res = Timeout.timeout(REQUEST_TIMEOUT) do
+    Net::HTTP.get_response(uri, { "Accept" => "application/json" })
+  end
   return nil unless res.is_a?(Net::HTTPSuccess)
 
   JSON.parse(res.body)
