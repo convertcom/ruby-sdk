@@ -17,9 +17,18 @@ module ConvertSdk
   # Build an SDK client from an SDK key (fetch) or a pre-fetched data object.
   def self.create: (?sdk_key: String?, ?data: Hash[untyped, untyped]?, ?store: untyped?, ?clock: (^() -> Float)?, **untyped options) -> Client
 
-  # Build the DataManager wired with the Story 2.7 config-cache surface.
-  def self.build_data_manager: (Config config, LogManager log_manager, DataStoreManager data_store_manager, (^() -> Float)? clock) -> DataManager
+  # Build the full collaborator graph wired around a validated Config. The
+  # structured return type carries each keyword Client#initialize requires so the
+  # double-splat at the call site type-checks against the Client constructor.
+  def self.build_managers: (Config config, LogManager log_manager, untyped? store, (^() -> Float)? clock) -> { http_client: HttpClient, data_store_manager: DataStoreManager, event_manager: EventManager, data_manager: DataManager, api_manager: ApiManager, experience_manager: ExperienceManager, feature_manager: FeatureManager, segments_manager: SegmentsManager }
+
+  # Build the DataManager wired with the Story 2.7 config-cache surface and the
+  # Story 2.9/2.10 decision engines.
+  def self.build_data_manager: (Config config, LogManager log_manager, DataStoreManager data_store_manager, (^() -> Float)? clock, BucketingManager bucketing_manager, RuleManager rule_manager) -> DataManager
 
   # Build the outbound delivery surface (Story 4.1 ApiManager).
   def self.build_api_manager: (Config config, LogManager log_manager, HttpClient http_client, EventManager event_manager, DataManager data_manager) -> ApiManager
+
+  # Build the per-context decisioning surfaces (Story 2.11 / 3.1 / 3.2).
+  def self.build_decisioning_managers: (LogManager log_manager, DataStoreManager data_store_manager, DataManager data_manager, RuleManager rule_manager) -> { experience_manager: ExperienceManager, feature_manager: FeatureManager, segments_manager: SegmentsManager }
 end

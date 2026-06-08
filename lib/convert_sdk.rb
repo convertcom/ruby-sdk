@@ -112,22 +112,58 @@ module ConvertSdk
     ForkGuard.logger = log_manager
     config = Config.new(log_manager: log_manager, **config_options)
 
+    Client.new(config: config, log_manager: log_manager, **build_managers(config, log_manager, store, clock))
+  end
+
+  # Build the full collaborator graph wired around a validated {Config}: the HTTP
+  # port, the store/event ports, the Story 2.9/2.10 decision engines, the
+  # {DataManager} (decision flow), the {ApiManager} (delivery), and the per-context
+  # decisioning surfaces (Story 2.11 / 3.1 / 3.2). All thread-free (NFR4 — no
+  # timers start here). Returned as the keyword map {Client#initialize} consumes.
+  # @api private
+  def self.build_managers(config, log_manager, store, clock)
     http_client = HttpClient.new(
-      log_manager: log_manager,
-      open_timeout: config.open_timeout,
-      read_timeout: config.read_timeout
+      log_manager: log_manager, open_timeout: config.open_timeout, read_timeout: config.read_timeout
     )
     data_store_manager = DataStoreManager.new(log_manager: log_manager, store: store)
     event_manager = EventManager.new(log_manager: log_manager)
-    data_manager = build_data_manager(config, log_manager, data_store_manager, clock)
-    api_manager = build_api_manager(config, log_manager, http_client, event_manager, data_manager)
-
-    Client.new(
-      config: config, log_manager: log_manager, http_client: http_client,
-      data_store_manager: data_store_manager, event_manager: event_manager,
-      data_manager: data_manager, api_manager: api_manager
+    # The pure-math decision engines (Story 2.9 / 2.10) — thread-free, config-bound.
+    bucketing_manager = BucketingManager.new(config: config, log_manager: log_manager)
+    rule_manager = RuleManager.new(config: config, comparisons: Comparisons, log_manager: log_manager)
+    # The DataManager owns the ordered decision flow; it needs the two engines to
+    # bucket and walk rules (without them it is config-read-only — the 2.5/2.7 use).
+    data_manager = build_data_manager(
+      config, log_manager, data_store_manager, clock, bucketing_manager, rule_manager
     )
+    api_manager = build_api_manager(config, log_manager, http_client, event_manager, data_manager)
+    decisioning = build_decisioning_managers(log_manager, data_store_manager, data_manager, rule_manager)
+    {
+      http_client: http_client, data_store_manager: data_store_manager,
+      event_manager: event_manager, data_manager: data_manager, api_manager: api_manager,
+      experience_manager: decisioning[:experience_manager],
+      feature_manager: decisioning[:feature_manager],
+      segments_manager: decisioning[:segments_manager]
+    }
   end
+  private_class_method :build_managers
+
+  # Build the per-context decisioning surfaces (Story 2.11 / 3.1 / 3.2) as a
+  # thread-free trio (NFR4 — no timers start here). SegmentsManager reuses the
+  # rule engine and resolves the store-key halves from the DataManager readers
+  # (its account/project resolvers).
+  # @api private
+  def self.build_decisioning_managers(log_manager, data_store_manager, data_manager, rule_manager)
+    {
+      experience_manager: ExperienceManager.new(data_manager: data_manager, log_manager: log_manager),
+      feature_manager: FeatureManager.new(data_manager: data_manager, log_manager: log_manager),
+      segments_manager: SegmentsManager.new(
+        data_manager: data_manager, data_store_manager: data_store_manager,
+        account_resolver: -> { data_manager.account_id }, project_resolver: -> { data_manager.project_id },
+        rule_manager: rule_manager, log_manager: log_manager
+      )
+    }
+  end
+  private_class_method :build_decisioning_managers
 
   # Build the outbound delivery surface (Story 4.1): the {ApiManager} owns the
   # per-visitor event queue and the wire-payload builder. No thread is started
@@ -142,13 +178,19 @@ module ConvertSdk
   end
   private_class_method :build_api_manager
 
-  # Build the {DataManager} wired with the Story 2.7 config-cache surface: the
-  # cache lives under +convert_sdk.config.{sdkKey}+ (the DataManager writes
-  # through on every install and runs the timer-off TTL check against it). A nil
-  # sdk_key (direct-data mode) leaves the cache key nil, so no cache write
-  # happens. The +clock+ (monotonic TTL source) is injected only when supplied.
+  # Build the {DataManager} wired with the Story 2.7 config-cache surface AND the
+  # Story 2.9/2.10 decision engines: the cache lives under
+  # +convert_sdk.config.{sdkKey}+ (the DataManager writes through on every install
+  # and runs the timer-off TTL check against it). A nil sdk_key (direct-data mode)
+  # leaves the cache key nil, so no cache write happens. The +clock+ (monotonic
+  # TTL source) is injected only when supplied. The +bucketing_manager+ /
+  # +rule_manager+ make the ordered decision flow operative (without them the
+  # DataManager is config-read-only). The account/project resolvers are left to
+  # the DataManager's own readers (its constructor defaults to +#account_id+ /
+  # +#project_id+) — the live config IS the source of those store-key halves here.
   # @api private
-  def self.build_data_manager(config, log_manager, data_store_manager, clock)
+  def self.build_data_manager(config, log_manager, data_store_manager, clock,
+                              bucketing_manager, rule_manager)
     config_key = config.sdk_key.nil? ? nil : data_store_manager.config_key(config.sdk_key)
     clock_option = clock.nil? ? {} : { clock: clock } #: Hash[Symbol, ^() -> Float]
     DataManager.new(
@@ -156,6 +198,8 @@ module ConvertSdk
       data_store_manager: data_store_manager,
       config_key: config_key,
       ttl: config.data_refresh_interval,
+      bucketing_manager: bucketing_manager,
+      rule_manager: rule_manager,
       **clock_option
     )
   end
