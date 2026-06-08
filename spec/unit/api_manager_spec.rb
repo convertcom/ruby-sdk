@@ -295,20 +295,26 @@ RSpec.describe ConvertSdk::ApiManager do
       expect(received).to eq([{ "reason" => "size", "visitors" => 1 }])
     end
 
-    it "never blocks the enqueuing caller on the size-trigger POST (POST outside the lock)" do
+    it "runs the size-trigger POST outside the queue lock (a concurrent enqueue is not blocked)" do
       stub_request(:post, "#{HttpStubs::TRACK_HOST}/10025986/v1/track/sdk-key-1")
         .to_return do
           sleep(0.3)
           { status: 200, body: JSON.generate(canned_ack) }
         end
-      manager = build_api_manager(event_batch_size: 1, flush_interval: nil)
+      # batch_size 2: the releaser thread's SECOND enqueue fires the size release
+      # and enters the slow POST; a concurrent enqueue (which stays BELOW the
+      # threshold, so it triggers no release of its own) must not wait on that
+      # in-flight POST — proving the POST is outside the queue lock (NFR2).
+      manager = build_api_manager(event_batch_size: 2, flush_interval: nil)
 
-      # The size trigger releases on THIS thread, but the POST runs outside the
-      # queue lock — a concurrent enqueue must not wait on the in-flight POST.
-      releaser = Thread.new { manager.enqueue("v1", bucketing_event(experience_id: "e1", variation_id: "var1")) }
-      sleep(0.05)
+      releaser = Thread.new do
+        manager.enqueue("v1", bucketing_event(experience_id: "e1", variation_id: "var1"))
+        manager.enqueue("v2", bucketing_event(experience_id: "e2", variation_id: "var2")) # → size release, slow POST
+      end
+      sleep(0.05) # let the releaser enter the outside-the-lock POST
+
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      manager.enqueue("v2", bucketing_event(experience_id: "e2", variation_id: "var2"))
+      manager.enqueue("v3", bucketing_event(experience_id: "e3", variation_id: "var3")) # size 1 < 2 → no trigger
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
 
       expect(elapsed).to be < 0.1
