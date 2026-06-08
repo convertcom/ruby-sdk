@@ -96,6 +96,8 @@ module ConvertSdk
     # @!method error(message)
     #   Log at ERROR — internal failures.
 
+    # @param message [String] the already-formatted message.
+    # @return [void] log at TRACE (finest-grained); dispatches to the sink's +#debug+.
     def trace(message)
       emit(LogLevel::TRACE, message)
     end

@@ -16,21 +16,28 @@ module ConvertSdk
   #
   # Reference: Austin Appleby's MurmurHash3_x86_32 (public domain).
   # https://github.com/aappleby/smhasher/blob/master/src/MurmurHash3.cpp
+  #
+  # @api private
   module MurmurHash3
     # 32-bit overflow mask — applied after every multiply/add/shift.
     MASK_32 = 0xFFFFFFFF
 
-    # Canonical MurmurHash3_x86_32 mixing constants.
+    # Canonical MurmurHash3_x86_32 k1-scramble multiply constant.
     C1 = 0xcc9e2d51
+    # Canonical MurmurHash3_x86_32 k1-scramble second multiply constant.
     C2 = 0x1b873593
-    # Body block mixing: rotl(h1, ROT_H) * M + N
+    # Body block mixing multiplier: rotl(h1, R2) * M + N.
     M = 5
+    # Body block mixing addend: rotl(h1, R2) * M + N.
     N = 0xe6546b64
-    R1 = 15 # k1 rotate-left before * C2
-    R2 = 13 # h1 rotate-left in the body mix
+    # k1 rotate-left amount before the * C2 multiply.
+    R1 = 15
+    # h1 rotate-left amount in the body mix.
+    R2 = 13
 
-    # Finalization mix (fmix32) constants.
+    # Finalization mix (fmix32) first multiply constant.
     FMIX_C1 = 0x85ebca6b
+    # Finalization mix (fmix32) second multiply constant.
     FMIX_C2 = 0xc2b2ae35
 
     # Compute the MurmurHash3 x86 32-bit hash of +key+ with +seed+.
