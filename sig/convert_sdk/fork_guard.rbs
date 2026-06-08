@@ -23,6 +23,8 @@ module ConvertSdk
 
     def self.rearm!: () -> void
 
+    def self.stop_all_timers!: () -> void
+
     def self.reset_for_tests!: () -> void
 
     # The prepended _fork wrapper (Rails ForkTracker pattern).
