@@ -129,6 +129,20 @@ module ConvertSdk
       @queue_mutex.synchronize { @size }
     end
 
+    # Atomically empty the queue WITHOUT returning the entries (Story 4.4 child
+    # queue-ownership clear). A forked child inherits a COPY of the parent's
+    # queued events; clearing the child's copy ensures the child never
+    # double-delivers the parent's events (the parent's timer still runs there
+    # and delivers them). Distinct from {#drain!} (which allocates and returns
+    # the entries for delivery) — this just discards. Idempotent.
+    # @return [void]
+    def clear
+      @queue_mutex.synchronize do
+        @items = []
+        @size = 0
+      end
+    end
+
     private
 
     # Merge ONE drained per-visitor entry back into @items, preserving the
