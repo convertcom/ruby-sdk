@@ -1,0 +1,69 @@
+module ConvertSdk
+  # Visitor segmentation in the JS SDK wire shape (Story 3.2). put_segments
+  # restricts to the seven JS SegmentsKeys report keys (silent-drop others);
+  # select_custom_segments reuses the Epic 2 RuleManager to evaluate a segment's
+  # rules and attaches matching ids under StoreData["segments"]["customSegments"].
+  # Stored representation is camelCase wire-world strings (visitorType/
+  # customSegments) — never the diverged PHP variants (FR30).
+  class SegmentsManager
+    CUSTOM_SEGMENTS: String
+
+    SEGMENTS_KEYS: Array[String]
+
+    @data_manager: DataManager
+    @data_store_manager: DataStoreManager
+    @account_resolver: ^() -> untyped
+    @project_resolver: ^() -> untyped
+    @rule_manager: RuleManager
+    @log_manager: LogManager?
+
+    def initialize: (
+      data_manager: DataManager,
+      data_store_manager: DataStoreManager,
+      account_resolver: ^() -> untyped,
+      project_resolver: ^() -> untyped,
+      rule_manager: RuleManager,
+      ?log_manager: LogManager?
+    ) -> void
+
+    def put_segments: (String visitor_id, Hash[String, untyped] segments) -> void
+
+    def select_custom_segments: (
+      String visitor_id,
+      Array[String] segment_keys,
+      ?Hash[String, untyped]? segment_rule
+    ) -> (Hash[String, untyped] | Sentinel | nil)
+
+    private
+
+    def filter_report_segments: (untyped segments) -> Hash[String, untyped]
+
+    def lookup_segments: (untyped segment_keys) -> Array[Hash[String, untyped]]
+
+    def set_custom_segments: (
+      String visitor_id,
+      Array[Hash[String, untyped]] segments,
+      Hash[String, untyped]? segment_rule
+    ) -> (Hash[String, untyped] | Sentinel | nil)
+
+    def append_segment_id: (
+      Hash[String, untyped] segment,
+      Array[String] existing,
+      Array[String] segment_ids
+    ) -> void
+
+    def persist_custom_segments: (
+      String visitor_id,
+      Array[String] existing,
+      Array[String] segment_ids
+    ) -> Hash[String, untyped]?
+
+    def stored_custom_segments: (String visitor_id) -> Array[String]
+
+    def merge_segments: (String visitor_id, Hash[String, untyped] report_segments) -> Hash[String, untyped]
+
+    def account_id: () -> String
+
+    def project_id: () -> String
+  end
+end
