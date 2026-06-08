@@ -23,7 +23,9 @@ workers Integer(ENV.fetch("WEB_CONCURRENCY", 2))
 # Preload the app in the master before forking (the whole point — see above).
 preload_app!
 
-port Integer(ENV.fetch("PORT", 3000))
+# Bind 0.0.0.0 so the Docker container is reachable from the host. (Use ONLY
+# `bind`, not also `port` — declaring both adds two bindings to the same address
+# and Puma fails with "Address already in use".)
 bind "tcp://0.0.0.0:#{ENV.fetch('PORT', 3000)}"
 environment ENV.fetch("RAILS_ENV", "production")
 
