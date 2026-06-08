@@ -21,8 +21,12 @@
 /*.gem
 
 # Node release tooling (semantic-release) is DEV-ONLY and runs on the CI runner.
-# package.json / release.config.mjs ARE committed (they configure the release
-# pipeline), but the installed dependency tree and the resolved lockfile must
-# never be committed — the gem keeps zero runtime deps and ships no Node files.
+# package.json / release.config.mjs / yarn.lock / .yarnrc.yml ARE committed
+# (they configure the release pipeline and pin the dev toolchain — the PHP/
+# Android SDKs commit their lockfile too, so `yarn install --immutable` is
+# reproducible). The installed dependency tree and the Yarn Berry cache must
+# never be committed; the gem keeps zero runtime deps and ships no Node files.
 /node_modules/
 /package-lock.json
+/.yarn/
+/.pnp.*

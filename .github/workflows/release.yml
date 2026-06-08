@@ -86,11 +86,20 @@ jobs:
         with:
           node-version: 'lts/*'
 
+      - name: Enable corepack (Yarn from the lockfile dialect)
+        # Activates the corepack yarn shim so `yarn install` runs Yarn Berry
+        # (the committed yarn.lock is __metadata version 10). Matches the PHP/
+        # Android SDK release flow. Runs AFTER setup-node so corepack uses the
+        # pinned Node toolchain.
+        run: corepack enable
+
       - name: Install Node release tooling
-        # The dev-only semantic-release toolchain from package.json. The gem
-        # itself keeps ZERO runtime deps and the gemspec excludes these node
+        # The dev-only semantic-release toolchain from package.json, resolved
+        # against the committed yarn.lock. --immutable errors if the lockfile
+        # drifts from package.json (matches the PHP/Android SDK pattern). The
+        # gem itself keeps ZERO runtime deps and the gemspec excludes these node
         # artifacts — they exist only on the CI runner during release.
-        run: npm install --no-audit --no-fund
+        run: yarn install --immutable
 
       - name: Configure RubyGems OIDC Trusted Publishing credentials
         # Exchanges the workflow's GitHub OIDC token for a short-lived RubyGems
@@ -121,7 +130,7 @@ jobs:
         # fails, semantic-release aborts BEFORE the GitHub Release/tag is
         # finalized — there is never a Release without a gem on RubyGems.org.
         # No commit is pushed to `main`.
-        run: npx semantic-release
+        run: yarn release
         env:
           # Used by semantic-release core to push the tag and by
           # @semantic-release/github to create the Release.
