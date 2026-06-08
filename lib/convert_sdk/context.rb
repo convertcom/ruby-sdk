@@ -67,9 +67,12 @@ module ConvertSdk
     # @param segments_manager [SegmentsManager, nil] the visitor-segmentation
     #   surface backing {#set_default_segments}/{#run_custom_segments} (Story 3.2).
     #   nil leaves the segmentation methods inert (no persistence).
+    # @param api_manager [ApiManager, nil] the outbound delivery surface (Story
+    #   4.1). When wired, a fresh bucketing decision enqueues a +bucketing+ event
+    #   at the single {#fire_bucketing} seam; nil leaves the enqueue inert.
     def initialize(visitor_id:, data_manager:, data_store_manager:, event_manager:,
                    log_manager:, config:, attributes: nil, experience_manager: nil,
-                   feature_manager: nil, segments_manager: nil)
+                   feature_manager: nil, segments_manager: nil, api_manager: nil)
       @visitor_id = visitor_id
       @data_manager = data_manager
       @data_store_manager = data_store_manager
@@ -79,6 +82,7 @@ module ConvertSdk
       @experience_manager = experience_manager
       @feature_manager = feature_manager
       @segments_manager = segments_manager
+      @api_manager = api_manager
       # Deep-stringify the caller's attributes ONCE at the boundary; internals
       # only ever see string keys. nil → empty. The caller's hash is never mutated.
       @attributes = deep_stringify(attributes || {})
@@ -395,9 +399,22 @@ module ConvertSdk
       }
     end
 
-    # Fire the BUCKETING lifecycle event for a fresh/decided variation (deferred
-    # so late subscribers are replayed). Contained — a raising listener never
-    # crosses back here (EventManager swallows it).
+    # The single named seam fired once per fresh/decided variation. It does TWO
+    # things at this one site (Story 2.11 fired the lifecycle event; Story 4.1
+    # completes the deferred enqueue here — never a SECOND fire):
+    #
+    # 1. Fires the {SystemEvents::BUCKETING} lifecycle event (deferred so late
+    #    subscribers are replayed).
+    # 2. Enqueues the wire-shaped +bucketing+ event into the {ApiManager} queue
+    #    (when one is wired) so {Client#flush} delivers it — string-keyed camelCase
+    #    +{eventType:'bucketing', data:{experienceId, variationId}}+. The visitor's
+    #    stored report-segments ride on the queue's first entry (JS parity —
+    #    data-manager.ts:692-694); an empty segments map is passed as +nil+ so the
+    #    wire entry omits the +segments+ key entirely.
+    #
+    # Keep this the SOLE enqueue site (Story 4.5 attaches per-call tracking-control
+    # hooks here). Contained — a raising listener never crosses back (EventManager
+    # swallows it); the enqueue is pure in-memory and inert when no ApiManager is wired.
     def fire_bucketing(experience_key, variation)
       @event_manager.fire(
         SystemEvents::BUCKETING,
@@ -405,6 +422,26 @@ module ConvertSdk
         nil,
         deferred: true
       )
+      enqueue_bucketing_event(variation)
+    end
+
+    # Enqueue the wire-shaped bucketing event for the decided variation (no-op when
+    # no {ApiManager} is wired). The event keys are camelCase strings sourced from
+    # the {BucketedVariation} value object; segments ride from the visitor's
+    # StoreData (passed as nil when empty so the wire entry omits them).
+    def enqueue_bucketing_event(variation)
+      return if @api_manager.nil?
+
+      event = {
+        "eventType" => SystemEvents::BUCKETING,
+        "data" => {
+          "experienceId" => variation.experience_id,
+          "variationId" => variation.id
+        }
+      }
+      stored_segments = get_visitor_data["segments"]
+      segments = stored_segments.is_a?(Hash) && !stored_segments.empty? ? stored_segments : nil
+      @api_manager.enqueue(@visitor_id, event, segments: segments)
     end
 
     # The account half of the visitor store key. The {DataManager} reader is
