@@ -14,6 +14,7 @@ module ConvertSdk
     @experience_manager: ExperienceManager?
     @feature_manager: FeatureManager?
     @segments_manager: SegmentsManager?
+    @api_manager: ApiManager?
 
     attr_reader visitor_id: String
     attr_reader attributes: Hash[String, untyped]
@@ -28,7 +29,8 @@ module ConvertSdk
       ?attributes: Hash[untyped, untyped]?,
       ?experience_manager: ExperienceManager?,
       ?feature_manager: FeatureManager?,
-      ?segments_manager: SegmentsManager?
+      ?segments_manager: SegmentsManager?,
+      ?api_manager: ApiManager?
     ) -> void
 
     def update_visitor_properties: (Hash[untyped, untyped]? properties) -> self
@@ -58,6 +60,8 @@ module ConvertSdk
     def decision_attributes: (Hash[untyped, untyped]? per_call) -> Hash[Symbol, untyped]
 
     def fire_bucketing: (untyped experience_key, BucketedVariation variation) -> void
+
+    def enqueue_bucketing_event: (BucketedVariation variation) -> void
 
     def account_key: () -> String
 

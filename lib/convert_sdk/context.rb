@@ -430,7 +430,8 @@ module ConvertSdk
     # the {BucketedVariation} value object; segments ride from the visitor's
     # StoreData (passed as nil when empty so the wire entry omits them).
     def enqueue_bucketing_event(variation)
-      return if @api_manager.nil?
+      manager = @api_manager
+      return if manager.nil?
 
       event = {
         "eventType" => SystemEvents::BUCKETING,
@@ -441,7 +442,7 @@ module ConvertSdk
       }
       stored_segments = get_visitor_data["segments"]
       segments = stored_segments.is_a?(Hash) && !stored_segments.empty? ? stored_segments : nil
-      @api_manager.enqueue(@visitor_id, event, segments: segments)
+      manager.enqueue(@visitor_id, event, segments: segments)
     end
 
     # The account half of the visitor store key. The {DataManager} reader is
