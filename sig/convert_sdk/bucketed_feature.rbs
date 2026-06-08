@@ -10,6 +10,11 @@ module ConvertSdk
     attr_reader status: String?
     attr_reader variables: Hash[untyped, untyped]?
 
+    # Keyword-init construction (the frozen value-object contract). Overrides the
+    # inherited Struct positional/symbol new overloads with the keyword form the
+    # SDK actually uses (FeatureManager, story 3.1) — mirrors BucketedVariation.
+    def self.new: (**untyped) -> instance
+
     def initialize: (**untyped) -> void
 
     def error?: () -> bool

@@ -311,9 +311,11 @@ module ConvertSdk
     # Declared features keyed by id (String), for the change->feature mapping and
     # the DISABLED padding. Mirrors JS getListAsObject('id').
     def features_by_id
-      @data_manager.features.each_with_object({}) do |feature, by_id|
-        by_id[feature["id"].to_s] = feature if feature.is_a?(Hash) && feature["id"]
+      result = {} #: Hash[String, untyped]
+      @data_manager.features.each do |feature|
+        result[feature["id"].to_s] = feature if feature.is_a?(Hash) && feature["id"]
       end
+      result
     end
 
     # boolean: "true"->true, "false"->false, else Ruby truthiness of the value
@@ -343,7 +345,7 @@ module ConvertSdk
     def cast_float(value)
       return 1.0 if value == true
       return 0.0 if value == false
-      return value.to_f if value.is_a?(Numeric)
+      return value + 0.0 if value.is_a?(Integer) || value.is_a?(Float)
 
       str = value.to_s.strip
       match = str.match(/\A[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/)
