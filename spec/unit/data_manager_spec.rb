@@ -294,4 +294,178 @@ RSpec.describe ConvertSdk::DataManager do
       expect(called).to eq(0)
     end
   end
+
+  # --- Story 4.3: conversion tracking + two-level atomic goal dedup ----------
+
+  # A DataManager wired with the live store + config + key resolvers so #convert
+  # can read goals, persist the goals-map mark atomically, and read the stored
+  # bucketing map for bucketingData. Single construction site for the section.
+  def converting_manager
+    described_class.new(
+      log_manager: log_manager, data_store_manager: dsm,
+      account_resolver: -> { data["account_id"] },
+      project_resolver: -> { data["project"]["id"] }
+    ).tap { |m| m.install_config(config) }
+  end
+
+  let(:conv_visitor) { "visitor-conv" }
+  let(:goal_key) { "increase-engagement" }
+  let(:goal_id) { "100215960" }
+  let(:store_key) { dsm.visitor_key(data["account_id"], data["project"]["id"], conv_visitor) }
+
+  # The persisted goals map for the conversion visitor (or {} when none).
+  def stored_goals(manager_unused = nil)
+    (store.get(store_key) || {})["goals"] || {}
+  end
+
+  describe "#convert — goal lookup + enqueue contract (AC#1)" do
+    it "returns the conversion data hash for a fresh goal" do
+      result = converting_manager.convert(conv_visitor, goal_key)
+      expect(result).to include("goalId" => goal_id)
+    end
+
+    it "omits goalData when none is supplied" do
+      result = converting_manager.convert(conv_visitor, goal_key)
+      expect(result).not_to have_key("goalData")
+    end
+
+    it "returns nil and debug-logs on an unknown goal key (miss → no enqueue)" do
+      result = converting_manager.convert(conv_visitor, "no-such-goal")
+      expect(result).to be_nil
+      expect(sink.messages.any? { |l| l.include?("convert") && l.include?("no goal") }).to be(true)
+    end
+  end
+
+  describe "#convert — goalData 8-key validation → [{key,value}] pairs (AC#1)" do
+    # Each platform key, supplied via its snake_case Ruby kwarg-symbol form,
+    # must surface as the camelCase wire identifier in a {key,value} pair.
+    {
+      amount: "amount",
+      products_count: "productsCount",
+      transaction_id: "transactionId",
+      custom_dimension_1: "customDimension1",
+      custom_dimension_2: "customDimension2",
+      custom_dimension_3: "customDimension3",
+      custom_dimension_4: "customDimension4",
+      custom_dimension_5: "customDimension5"
+    }.each do |ruby_key, wire_key|
+      it "maps #{ruby_key} → #{wire_key} as a {key,value} pair" do
+        result = converting_manager.convert(conv_visitor, goal_key, goal_data: { ruby_key => 7 })
+        expect(result["goalData"]).to eq([{ "key" => wire_key, "value" => 7 }])
+      end
+    end
+
+    it "emits goalData as an array of pairs, not a flat map" do
+      result = converting_manager.convert(
+        conv_visitor, goal_key, goal_data: { amount: 49.99, transaction_id: "tx-1" }
+      )
+      expect(result["goalData"]).to contain_exactly(
+        { "key" => "amount", "value" => 49.99 },
+        { "key" => "transactionId", "value" => "tx-1" }
+      )
+    end
+
+    it "rejects unknown goalData keys and debug-logs" do
+      result = converting_manager.convert(conv_visitor, goal_key, goal_data: { bogus: 1, amount: 5 })
+      keys = result["goalData"].map { |pair| pair["key"] }
+      expect(keys).to eq(["amount"])
+      expect(sink.messages.any? { |l| l.include?("convert") && l.include?("bogus") }).to be(true)
+    end
+  end
+
+  describe "#convert — two-level atomic dedup (AC#2)" do
+    it "marks the goal in the visitor's StoreData goals map on first conversion" do
+      converting_manager.convert(conv_visitor, goal_key)
+      expect(stored_goals[goal_id]).to be_truthy
+    end
+
+    it "deduplicates a repeat conversion for the same goal (nil, no second enqueue)" do
+      m = converting_manager
+      expect(m.convert(conv_visitor, goal_key)).not_to be_nil
+      expect(m.convert(conv_visitor, goal_key)).to be_nil
+    end
+
+    it "debug-logs the dedup skip" do
+      m = converting_manager
+      m.convert(conv_visitor, goal_key)
+      m.convert(conv_visitor, goal_key)
+      expect(sink.messages.any? { |l| l.include?("convert") && l.include?("already") }).to be(true)
+    end
+
+    it "tracks distinct goals independently for the same visitor" do
+      m = converting_manager
+      expect(m.convert(conv_visitor, goal_key)).not_to be_nil
+      expect(m.convert(conv_visitor, "decrease-bounce-rate")).not_to be_nil
+    end
+
+    it "tracks the same goal independently for distinct visitors (visitor in the key)" do
+      m = converting_manager
+      expect(m.convert("vis-a", goal_key)).not_to be_nil
+      expect(m.convert("vis-b", goal_key)).not_to be_nil
+    end
+
+    # THE qs-01 regression: N threads racing the SAME visitor+goal must produce
+    # EXACTLY ONE non-nil result (one enqueue). The check-then-mark is one locked
+    # op inside the store merge mutex, so the race cannot double-count.
+    it "enqueues EXACTLY ONE conversion under N concurrent same-goal tracks (qs-01)" do
+      m = converting_manager
+      thread_count = 25
+      barrier = Thread::Queue.new
+      results = Array.new(thread_count)
+      threads = (0...thread_count).map do |i|
+        Thread.new do
+          barrier.pop
+          results[i] = m.convert(conv_visitor, goal_key)
+        end
+      end
+      thread_count.times { barrier.push(:go) }
+      threads.each(&:join)
+      enqueued = results.compact
+      expect(enqueued.size).to eq(1)
+      expect(stored_goals[goal_id]).to be_truthy
+    end
+  end
+
+  describe "#convert — force_multiple_transactions bypass (AC#3)" do
+    it "bypasses dedup and still returns a conversion on a duplicate" do
+      m = converting_manager
+      m.convert(conv_visitor, goal_key)
+      result = m.convert(conv_visitor, goal_key, force_multiple_transactions: true)
+      expect(result).to include("goalId" => goal_id)
+    end
+
+    it "enqueues a fresh forced conversion even with no prior mark" do
+      result = converting_manager.convert(conv_visitor, goal_key, force_multiple_transactions: true)
+      expect(result).to include("goalId" => goal_id)
+    end
+
+    it "does NOT re-mark on force when there was no prior mark (conservative default)" do
+      m = converting_manager
+      m.convert(conv_visitor, goal_key, force_multiple_transactions: true)
+      expect(stored_goals).not_to have_key(goal_id)
+    end
+
+    it "preserves (does not corrupt) a prior mark when forcing" do
+      m = converting_manager
+      m.convert(conv_visitor, goal_key) # marks
+      m.convert(conv_visitor, goal_key, force_multiple_transactions: true) # bypass, no re-mark
+      # A subsequent non-forced call still sees the original mark → deduplicated.
+      expect(m.convert(conv_visitor, goal_key)).to be_nil
+    end
+  end
+
+  describe "#convert — bucketingData attribution (AC#4)" do
+    it "includes the stored bucketing map as bucketingData for a bucketed visitor" do
+      dsm.merge_visitor_data(data["account_id"], data["project"]["id"], conv_visitor) do |_c|
+        { "bucketing" => { "100" => "200", "101" => "201" } }
+      end
+      result = converting_manager.convert(conv_visitor, goal_key)
+      expect(result["bucketingData"]).to eq({ "100" => "200", "101" => "201" })
+    end
+
+    it "omits bucketingData for an unbucketed visitor (empty stored map)" do
+      result = converting_manager.convert(conv_visitor, goal_key)
+      expect(result).not_to have_key("bucketingData")
+    end
+  end
 end
