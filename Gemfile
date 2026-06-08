@@ -32,13 +32,23 @@ gem "rubocop-performance", require: false
 # leg installs via `BUNDLE_WITHOUT=typecheck` (set on the `test` job in qa.yml)
 # without attempting the C-extension build. The CRuby `typecheck` job installs
 # this group and runs `rbs validate` + `steep check`.
-group :typecheck do
-  # Pinned with pessimistic constraints (qs-03 / D9): a minor bump cannot
-  # silently flip the gate's verdict. Versions currently resolving green:
-  # rbs 4.0.2, steep 2.0.0. No Gemfile.lock committed (matrix design) —
-  # pessimistic constraint is the only pin.
-  gem "rbs", "~> 4.0", require: false
-  gem "steep", "~> 2.0", require: false
+#
+# rbs ~> 4.0 / steep ~> 2.0 require Ruby >= 3.2. The `test` matrix job runs
+# `bundle lock` on Ruby 3.1 too and resolves ALL groups even with
+# BUNDLE_WITHOUT=typecheck, so an unsatisfiable pin breaks the 3.1 lock.
+# Declaring the group only on >= 3.2 omits it entirely on 3.1 (where typecheck
+# never runs anyway — the dedicated typecheck job is CRuby 3.4 only).
+# Gem::Version comparison is used (not string compare) to correctly order
+# versions like "3.10" vs "3.2" in future Ruby release lines.
+if Gem::Version.new(RUBY_VERSION) >= Gem::Version.new("3.2")
+  group :typecheck do
+    # Pinned with pessimistic constraints (qs-03 / D9): a minor bump cannot
+    # silently flip the gate's verdict. Versions currently resolving green:
+    # rbs 4.0.2, steep 2.0.0. No Gemfile.lock committed (matrix design) —
+    # pessimistic constraint is the only pin.
+    gem "rbs", "~> 4.0", require: false
+    gem "steep", "~> 2.0", require: false
+  end
 end
 
 # Documentation
