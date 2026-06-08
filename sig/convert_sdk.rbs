@@ -15,7 +15,7 @@ module ConvertSdk
   def self.at_exit_registration_enabled=: (bool value) -> bool
 
   # Build an SDK client from an SDK key (fetch) or a pre-fetched data object.
-  def self.create: (?sdk_key: String?, ?data: Hash[untyped, untyped]?, ?store: untyped?, ?clock: (^() -> Float)?, **untyped options) -> Client
+  def self.create: (?sdk_key: String?, ?data: Hash[untyped, untyped]?, ?store: untyped?, ?clock: (^() -> Float)?, ?sink: untyped?, **untyped options) -> Client
 
   # Build the full collaborator graph wired around a validated Config. The
   # structured return type carries each keyword Client#initialize requires so the
