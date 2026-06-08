@@ -51,8 +51,15 @@ RSpec.describe "Live end-to-end tracking (Story 5.1 AC#3)", :staging do
 
   # Live fetch-mode client, timer-off (no background thread), sink attached so
   # the delivery outcome is observable. Secret variant attached when present.
+  # Run at TRACE (the finest level) so the FULL lifecycle — including the
+  # init-time config GET whose URL carries the raw sdk_key — is captured, making
+  # the zero-leakage scan (AC#4) a real proof that the Redactor ran live, not
+  # that the secret merely never appeared.
   let(:client) do
-    opts = { sdk_key: staging_sdk_key, data_refresh_interval: nil, sink: sink }
+    opts = {
+      sdk_key: staging_sdk_key, data_refresh_interval: nil,
+      sink: sink, log_level: ConvertSdk::LogLevel::TRACE
+    }
     secret = staging_sdk_key_secret
     opts[:sdk_key_secret] = secret if secret
     ConvertSdk.create(**opts)
@@ -111,5 +118,30 @@ RSpec.describe "Live end-to-end tracking (Story 5.1 AC#3)", :staging do
     # Acceptance signal 2: no delivery-failure warn anywhere (a 4xx/5xx logs it).
     expect(sink.joined).not_to include(StagingTrackingSignals::DELIVERY_FAILED),
                                "the live endpoint rejected the delivery: #{sink.joined}"
+  end
+
+  # AC#4 — zero-leakage under LIVE conditions (NFR5). The whole loop already runs
+  # at TRACE with the CapturingSink attached at create, so the captured log spans
+  # the FULL lifecycle (init config GET → decision → track → flush). Proves the
+  # Redactor masked the live secret across every line — the 4.7 scan pattern, now
+  # against the real platform. Skips with the rest of the group without keys; the
+  # with-secret CI variant is where the secret-leakage assertion is meaningful.
+  it "never leaks the raw sdk_key / sdk_key_secret across the TRACE lifecycle (NFR5)" do
+    run_loop_and_capture_release
+    log = sink.joined
+
+    # We observed the full lifecycle (the init-time config GET line is present).
+    expect(log).to include("HttpClient#request: GET")
+
+    # Zero raw secrets anywhere — the load-bearing NFR5 assertion under live runs.
+    expect(log).not_to include(staging_sdk_key)
+    secret = staging_sdk_key_secret
+    expect(log).not_to include(secret) if secret
+
+    # And the Redactor demonstrably RAN: the masked sdk_key form (first-4 + "…")
+    # appears on the line that carried it (the config URL), proving redaction
+    # rather than coincidental absence.
+    masked_key = "#{staging_sdk_key[0, 4]}…"
+    expect(log).to include(masked_key)
   end
 end
