@@ -38,5 +38,11 @@ module ConvertRailsDemo
 
     # The demo serves only JSON; no view layer, no asset pipeline.
     config.hosts.clear if ENV["CONVERT_DEMO_DISABLE_HOST_CHECK"] == "1"
+
+    # Rails requires a secret_key_base to boot in production. The demo ships NO
+    # encrypted credentials (it's a throwaway example), so source it from ENV with
+    # a fixed non-secret fallback — there is nothing sensitive to protect here (no
+    # sessions, no signed cookies; api_only). A real app uses credentials/ENV.
+    config.secret_key_base = ENV.fetch("SECRET_KEY_BASE", "convert-rails-demo-not-a-secret")
   end
 end
