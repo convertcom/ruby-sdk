@@ -20,6 +20,8 @@ module ConvertSdk
 
     def size: () -> Integer
 
+    def clear: () -> void
+
     private
 
     def merge_drained: (Hash[String, untyped] drained) -> void
