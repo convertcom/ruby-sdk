@@ -84,6 +84,24 @@ When adding a documented code sample, **copy it from a working spec or the demo*
 and add it to the `spec/docs/` smoke spec — never ship doc-only code that can
 drift from the real gem.
 
+## Testing & verification
+
+Run these before opening a PR. Each command maps to a gate the **Quality Checks**
+workflow (and the **Demo Fork Smoke** workflow) enforces:
+
+| Command | What it enforces |
+|---|---|
+| `bundle exec rspec` | The full RSpec suite on the current Ruby, with the coverage gates from `spec/spec_helper.rb` (85% global line floor; ≥ 95% line + branch on the Hashing/Bucketing/Rules critical group). |
+| `bundle exec rake` | The default task: RSpec **plus** RuboCop — the same pair the `Lint (RuboCop)` and `Test (…)` jobs run. |
+| `bundle exec rbs -r net-http -r uri -r json -I sig validate` | RBS signature validity (the `Typecheck` job's `rbs validate` step; CRuby-only). |
+| `bundle exec steep check` | Static type check of `sig/` against `lib/` (the `Typecheck` job's `steep check` step; CRuby-only). |
+| `DISABLE_COVERAGE=1 bundle exec rspec spec/cross_sdk` | The release-blocking **Cross-SDK parity (MurmurHash3)** gate — 100% of the vendored vectors must pass. `DISABLE_COVERAGE=1` matches CI: this narrow subset opts out of the global line gate (coverage is enforced by the full-suite run above). |
+| `bundle exec rspec spec/integration/full_chain_spec.rb` | The release-blocking **Full-chain release gate** — create→decide→track→flush, exact wire bytes, and zero raw-secret leakage at TRACE. |
+| `cd demo/rails && bundle exec ruby script/fork_smoke.rb` | The release-blocking **Puma-cluster fork smoke** — boots the real Puma cluster (workers 2, `preload_app!`) and asserts events from ≥ 2 distinct forked worker PIDs reach the track endpoint. Runs OFFLINE against a local stub (no staging secrets). |
+
+Do not change the coverage configuration — it is single-sourced in
+`spec/spec_helper.rb` (see **Coverage gates** above).
+
 ## API documentation (YARD)
 
 All public classes and methods are YARD-documented; `@api private` internals are
@@ -102,10 +120,16 @@ on every push to `main` (`.github/workflows/pages.yml`).
 
 Releases are **fully automated** and run only from `main` — there is **no**
 `rake release` task (it is deliberately absent from the `Rakefile`). The release
-pipeline (semantic-release, configured in Story 5.4's `release.yml`) reads the
-merged Conventional Commit subjects since the last release, computes the next
-semantic version, tags it, and publishes the gem to RubyGems via OIDC. The
-changelog is **GitHub Releases** (there is no `CHANGELOG.md` in the repo).
+pipeline (semantic-release in `.github/workflows/release.yml`) reads the merged
+Conventional Commit subjects since the last release, computes the next semantic
+version, tags it, and publishes the gem to RubyGems via OIDC Trusted Publishing.
+The changelog is **GitHub Releases** (there is no `CHANGELOG.md` in the repo).
 
 You never bump the version or publish manually — write an accurate PR title and
 the pipeline does the rest on merge.
+
+See **[RELEASE.md](RELEASE.md)** for the full release runbook: the release chain,
+the Conventional-Commit → version map, one-time repo-admin setup (RubyGems
+trusted-publisher registration, GitHub Pages, branch-protection required checks),
+dry-runs, the first `v1.0.0` release, the fork-PR safeguard, rollback (`gem
+yank`), and troubleshooting.
