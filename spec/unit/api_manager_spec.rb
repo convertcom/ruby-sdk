@@ -147,12 +147,26 @@ RSpec.describe ConvertSdk::ApiManager do
   end
 
   describe "#release_queue failure boundary" do
-    it "does not raise on a failed POST (4.2 owns retention; never-crash here)" do
+    it "does not raise on a failed POST and warns with the status (4.2 owns retention)" do
       stub_request(:post, "#{HttpStubs::TRACK_HOST}/10025986/v1/track/sdk-key-1")
         .to_return(status: 500, body: "")
       api_manager.enqueue("v1", bucketing_event(experience_id: "e1", variation_id: "var1"))
 
       expect { api_manager.release_queue("test") }.not_to raise_error
+      warns = sink.entries.filter_map { |level, message| message if level == :warn }
+      expect(warns).to include(a_string_matching(/delivery failed \(status 500\)/))
+    end
+
+    it "fires API_QUEUE_RELEASED with the failure status on a failed POST" do
+      stub_request(:post, "#{HttpStubs::TRACK_HOST}/10025986/v1/track/sdk-key-1")
+        .to_return(status: 500, body: "")
+      received = []
+      event_manager.on(ConvertSdk::SystemEvents::API_QUEUE_RELEASED) { |payload, err| received << [payload, err] }
+      api_manager.enqueue("v1", bucketing_event(experience_id: "e1", variation_id: "var1"))
+
+      api_manager.release_queue("test")
+
+      expect(received).to eq([[{ "reason" => "test" }, 500]])
     end
   end
 end
