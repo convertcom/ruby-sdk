@@ -175,7 +175,7 @@ RSpec.describe "Tracking control (Story 4.5)" do
 
   describe "track_conversion under tracking-off (AC#1)" do
     def drained_conversion_event(manager)
-      am.queue.drain!.flat_map { |v| v["events"] }.find { |e| e["eventType"] == "conversion" }
+      manager.queue.drain!.flat_map { |v| v["events"] }.find { |e| e["eventType"] == "conversion" }
     end
 
     it "is a no-op at the enqueue site (zero queue, no HTTP) and returns self unchanged" do
