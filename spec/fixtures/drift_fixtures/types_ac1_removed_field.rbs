@@ -1,0 +1,135 @@
+# AUTO-GENERATED FROM backend apiDoc/serving — DO NOT EDIT. Regenerate via the serving workflow.
+
+# AC1 DRIFT-REPRODUCTION FIXTURE — field removed from config_goal.
+#
+# This fixture is a MUTATED copy of sig/convert_sdk/config/generated/types.rbs
+# that has the "key" field removed from config_goal. It demonstrates that when
+# the regenerated RBS drops a field the contract probe depends on, `steep check`
+# fails on the exact probe line that reads it.
+#
+# Reproduction steps (AC1 proof):
+#   1. cp spec/fixtures/drift_fixtures/types_ac1_removed_field.rbs \
+#         sig/convert_sdk/config/generated/types.rbs
+#   2. bundle exec steep check
+#   3. Steep FAILS with (exit code 1):
+#
+#      steep/config_contract_probe.rb:99:4: [warning] Unknown key `"key"` is given to a record type
+#        Diagnostic ID: Ruby::UnknownRecordKey
+#        └ "key" => nil,  # => find_by_key (goal_by_key) matches on goal["key"]
+#
+#      steep/config_contract_probe.rb:97:4: [error] Cannot pass a value of type
+#        `{ "id" => nil, ?"key" => nil, ... }` as an argument of type ::ConvertSdk::config_goal
+#        Diagnostic ID: Ruby::ArgumentTypeMismatch
+#        └ "id" => nil, ... (the probe_goal_fields literal)
+#
+#      The exact probe lines (99 = UnknownRecordKey, 97 = ArgumentTypeMismatch)
+#      are named — "key" was removed from config_goal.
+#   4. Restore: git checkout sig/convert_sdk/config/generated/types.rbs
+#
+# The ArgumentTypeMismatch (error level) causes steep check to exit non-zero,
+# blocking the backend-opened PR pre-merge. The drift gate caught a depended-field
+# removal at build time, before any runtime code ran.
+
+module ConvertSdk
+  type rule_object = untyped
+
+  # DRIFT: "key" removed from config_goal to demonstrate AC1.
+  type goal_type = "dom_interaction" | "scroll_percentage" | "revenue" | "advanced" | "visits_page" | "code_trigger" | "ga_import" | "submits_form" | "clicks_link" | "clicks_element"
+
+  type feature_variable_type = "boolean" | "float" | "json" | "integer" | "string"
+
+  type ga_integration_type = "ga3" | "ga4"
+
+  type feature_variable = {
+    "key" => String?,
+    "type" => feature_variable_type?
+  }
+
+  type config_feature = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "variables" => Array[feature_variable]?
+  }
+
+  type experience_variation = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "traffic_allocation" => Numeric?,
+    "status" => String?,
+    "changes" => Array[untyped]?
+  }
+
+  type config_experience = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "type" => String?,
+    "status" => String?,
+    "variations" => Array[experience_variation]?,
+    "goals" => Array[String]?,
+    "locations" => untyped,
+    "audiences" => untyped,
+    "site_area" => rule_object,
+    "environment" => String?,
+    "integrations" => Array[untyped]?
+  }
+
+  # "key" field intentionally REMOVED to trigger AC1 drift detection.
+  type config_goal = {
+    "id" => String?,
+    "name" => String?,
+    "type" => goal_type?,
+    "rules" => rule_object
+  }
+
+  type config_audience = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "type" => String?,
+    "rules" => rule_object
+  }
+
+  type config_location = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "rules" => rule_object
+  }
+
+  type config_segment = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "rules" => rule_object
+  }
+
+  type config_project = {
+    "id" => String?,
+    "name" => String?,
+    "type" => String?
+  }
+
+  type config_response_data = {
+    "account_id" => String?,
+    "project" => config_project?,
+    "goals" => Array[config_goal]?,
+    "locations" => Array[config_location]?,
+    "audiences" => Array[config_audience]?,
+    "segments" => Array[config_segment]?,
+    "experiences" => Array[config_experience]?,
+    "features" => Array[config_feature]?
+  }
+
+  type experience_integration_ga_serving = {
+    "type" => ga_integration_type?,
+    "enabled" => bool?
+  }
+
+  type ga_settings = {
+    "type" => ga_integration_type?,
+    "enabled" => bool?
+  }
+end
