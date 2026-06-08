@@ -1,0 +1,136 @@
+# AUTO-GENERATED FROM backend apiDoc/serving — DO NOT EDIT. Regenerate via the serving workflow.
+
+# RBS type aliases for the Convert serving config response.
+# Generated from dist/types.gen.ts (already discriminator-corrected by fix-discriminants.js).
+# Entities covered: project/account ids; experiences + variations; features +
+# typed variables; goals (discriminated union, all 10 type values — AC4);
+# audiences; locations; segments; rule objects; GA integrations.
+#
+# All records are lenient (optional fields) so real config fields absent from
+# the spec (e.g. is_system, status on goals — D6) never cause false positives.
+# The probe (steep/config_contract_probe.rb) binds SYNTHETIC values to these
+# records and accesses only the spec-declared fields the SDK depends on.
+
+module ConvertSdk
+  # ── Primitive aliases ──────────────────────────────────────────────────────
+
+  # A nested rule structure (OR of AND blocks of OR_WHEN rule elements).
+  # Typed as untyped to avoid false positives from arbitrarily deep nesting.
+  type rule_object = untyped
+
+  # ── Goal discriminator ─────────────────────────────────────────────────────
+
+  # All 10 ConfigGoal discriminator-mapping values (AC4).
+  # Inherited verbatim from dist/types.gen.ts lines ~1885/~1915 via
+  # fix-discriminants.js — NOT the 5-value GoalTypes enum subset.
+  type goal_type = "dom_interaction" | "scroll_percentage" | "revenue" | "advanced" | "visits_page" | "code_trigger" | "ga_import" | "submits_form" | "clicks_link" | "clicks_element"
+
+  # ── Feature variable type ──────────────────────────────────────────────────
+
+  type feature_variable_type = "boolean" | "float" | "json" | "integer" | "string"
+
+  # ── GA integration discriminator ───────────────────────────────────────────
+
+  type ga_integration_type = "ga3" | "ga4"
+
+  # ── Core config entities ───────────────────────────────────────────────────
+
+  type feature_variable = {
+    "key" => String?,
+    "type" => feature_variable_type?
+  }
+
+  type config_feature = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "variables" => Array[feature_variable]?
+  }
+
+  type experience_variation = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "traffic_allocation" => Numeric?,
+    "status" => String?,
+    "changes" => Array[untyped]?
+  }
+
+  type config_experience = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "type" => String?,
+    "status" => String?,
+    "variations" => Array[experience_variation]?,
+    "goals" => Array[String]?,
+    "locations" => untyped,
+    "audiences" => untyped,
+    "site_area" => rule_object,
+    "environment" => String?,
+    "integrations" => Array[untyped]?
+  }
+
+  type config_goal = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "type" => goal_type?,
+    "rules" => rule_object
+  }
+
+  type config_audience = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "type" => String?,
+    "rules" => rule_object
+  }
+
+  type config_location = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "rules" => rule_object
+  }
+
+  type config_segment = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "rules" => rule_object
+  }
+
+  type config_project = {
+    "id" => String?,
+    "name" => String?,
+    "type" => String?
+  }
+
+  type config_response_data = {
+    "account_id" => String?,
+    "project" => config_project?,
+    "goals" => Array[config_goal]?,
+    "locations" => Array[config_location]?,
+    "audiences" => Array[config_audience]?,
+    "segments" => Array[config_segment]?,
+    "experiences" => Array[config_experience]?,
+    "features" => Array[config_feature]?
+  }
+
+  # ── Discriminated unions ────────────────────────────────────────────────────
+
+  # ExperienceIntegrationGAServing = ExperienceIntegrationGA3 | ExperienceIntegrationGA4Base
+  # Discriminated by the "type" field: ga3 or ga4.
+  type experience_integration_ga_serving = {
+    "type" => ga_integration_type?,
+    "enabled" => bool?
+  }
+
+  # GA_Settings = ProjectIntegrationGA3 | ProjectIntegrationGA4
+  # Discriminated by the "type" field: ga3 or ga4.
+  type ga_settings = {
+    "type" => ga_integration_type?,
+    "enabled" => bool?
+  }
+end
