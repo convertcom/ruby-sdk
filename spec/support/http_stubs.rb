@@ -118,6 +118,39 @@ module HttpStubs
     { "status" => "queued", "received" => 1 }
   end
 
+  # Build the EXPECTED tracking payload as a string-keyed camelCase Hash — the
+  # golden wire shape {ApiManager}'s payload builder must produce byte-identically
+  # (the only outbound snake_case=>camelCase site in the gem). Lives here so the
+  # Story 4.7 full-chain gate reuses the exact same golden the 4.1 unit spec uses.
+  #
+  # @param account_id [String]
+  # @param project_id [String]
+  # @param visitors [Array<Hash>] per-visitor wire entries
+  #   (+{"visitorId"=>…, "segments"=>{…}?, "events"=>[…]}+).
+  # @param enrich_data [Boolean] JS parity default false.
+  # @param source [String] the SDK identifier (Ruby: +"ruby-sdk"+).
+  # @return [Hash{String=>Object}] the golden expected payload.
+  def expected_track_payload(account_id:, project_id:, visitors:, enrich_data: false, source: "ruby-sdk")
+    {
+      "accountId" => account_id,
+      "projectId" => project_id,
+      "enrichData" => enrich_data,
+      "source" => source,
+      "visitors" => visitors
+    }
+  end
+
+  # A wire-shaped bucketing event (string-keyed camelCase) — the only event shape
+  # the queue holds at this story; conversion events (Story 4.3) reuse the builder.
+  #
+  # @return [Hash{String=>Object}]
+  def bucketing_event(experience_id:, variation_id:)
+    {
+      "eventType" => "bucketing",
+      "data" => { "experienceId" => experience_id, "variationId" => variation_id }
+    }
+  end
+
   # Standard JSON response headers.
   def json_headers
     { "Content-Type" => "application/json" }
