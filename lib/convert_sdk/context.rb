@@ -365,9 +365,10 @@ module ConvertSdk
     # deep-stringified to string keys (the rule engine reads string keys).
     def visitor_properties(attributes)
       rule_data = attributes.is_a?(Hash) ? (attributes[:ruleData] || attributes["ruleData"]) : nil
-      merged = @attributes.merge(deep_stringify(rule_data || {}))
+      empty = {} #: Hash[String, untyped]
+      merged = @attributes.merge(deep_stringify(rule_data || empty))
       stored = get_visitor_data["segments"]
-      stored = {} unless stored.is_a?(Hash)
+      stored = empty unless stored.is_a?(Hash)
       stored.merge(merged)
     end
 
