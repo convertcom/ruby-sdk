@@ -40,14 +40,22 @@ module ConvertContext
   end
 
   # Visitor attributes drive audience/segment matching. The demo passes a
-  # location + site-area pair (what a pricing experience typically gates on) plus
-  # the platform environment. Override per call by merging into the run_* args.
+  # location + site-area pair (what a pricing experience typically gates on), the
+  # platform environment, AND the two audience keys the OFFLINE fixture's
+  # experience audience gates on (`varName1`/`varName2`) — without those, the
+  # offline experience's audience does not match and the SDK correctly returns a
+  # NO_DATA_FOUND miss (verified against the committed config_data audience
+  # 100299433; the full-chain release gate pins the same matching set). Every value
+  # is overridable per request via a query param so a human can experiment.
   # @return [Hash{String=>String}]
   def convert_visitor_attributes
     {
+      "varName1" => params[:varName1].presence || "value1",
+      "varName2" => params[:varName2].presence || "value2",
       "country" => params[:country].presence || "US",
       "site_area" => params[:site_area].presence || "pricing",
-      "environment" => ENV.fetch("CONVERT_ENVIRONMENT", "staging")
+      "environment" => params[:environment].presence ||
+        ENV.fetch("CONVERT_ENVIRONMENT", "staging")
     }
   end
 end
