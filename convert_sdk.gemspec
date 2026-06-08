@@ -35,9 +35,9 @@ Gem::Specification.new do |spec|
     `git ls-files -z`.split("\x0").reject do |f|
       (File.expand_path(f) == __FILE__) ||
         f.start_with?(*%w[
-          bin/ test/ spec/ features/ docs/ demo/ sig/ .git .github appveyor Gemfile Steepfile
-          package.json package-lock.json release.config.mjs .releaserc .npmrc node_modules/
-        ])
+                        bin/ test/ spec/ features/ docs/ demo/ sig/ .git .github appveyor Gemfile Steepfile
+                        package.json package-lock.json release.config.mjs .releaserc .npmrc node_modules/
+                      ])
     end
   end
   spec.require_paths = ["lib"]
