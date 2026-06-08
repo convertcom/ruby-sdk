@@ -1,0 +1,42 @@
+module ConvertSdk
+  # The outbound delivery manager — owns the VisitorsQueue, the tracking
+  # endpoint, queue release, and the wire-payload builder (boundary #2).
+  # @api private.
+  class ApiManager
+    SOURCE: String
+    ENRICH_DATA: bool
+
+    @config: Config
+    @data_manager: DataManager
+    @http_client: HttpClient
+    @event_manager: EventManager
+    @log_manager: LogManager
+    @queue: VisitorsQueue
+
+    attr_reader queue: VisitorsQueue
+
+    def initialize: (
+      config: Config,
+      data_manager: DataManager,
+      http_client: HttpClient,
+      event_manager: EventManager,
+      log_manager: LogManager
+    ) -> void
+
+    def enqueue: (String visitor_id, Hash[String, untyped] event, ?segments: Hash[String, untyped]?) -> void
+
+    def release_queue: (?String? reason) -> void
+
+    private
+
+    def build_payload: (Array[Hash[String, untyped]] visitors) -> Hash[String, untyped]
+
+    def post_payload: (Hash[String, untyped] payload) -> void
+
+    def track_url: () -> String
+
+    def sdk_key: () -> String
+
+    def auth_headers: () -> Hash[String, String]
+  end
+end

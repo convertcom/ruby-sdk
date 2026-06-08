@@ -70,7 +70,7 @@ module ConvertSdk
         if entry
           entry["events"] << event
         else
-          entry = { "visitorId" => visitor_id, "events" => [event] }
+          entry = { "visitorId" => visitor_id, "events" => [event] } #: Hash[String, untyped]
           entry["segments"] = segments unless segments.nil?
           @items << entry
         end
