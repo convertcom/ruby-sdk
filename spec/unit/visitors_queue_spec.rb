@@ -247,4 +247,28 @@ RSpec.describe ConvertSdk::VisitorsQueue do
       expect(ids).not_to include("old0")
     end
   end
+
+  # Story 4.4: the child-side queue-ownership clear. A forked child inherits a
+  # COPY of the parent's queued events; the child must start EMPTY so it never
+  # double-delivers the parent's events (the parent's timer still runs there and
+  # delivers them). #clear is the atomic, allocation-light empty used by the
+  # ApiManager child-callback (drain! would allocate a discarded array).
+  describe "#clear (Story 4.4 child queue-ownership)" do
+    it "empties the queue and resets size to zero" do
+      queue.enqueue("v1", event("e1", "var1"))
+      queue.enqueue("v2", event("e2", "var2"))
+
+      queue.clear
+
+      expect(queue.size).to eq(0)
+      expect(queue.drain!).to eq([])
+    end
+
+    it "is a no-op on an already-empty queue (idempotent)" do
+      queue.clear
+      queue.clear
+
+      expect(queue.size).to eq(0)
+    end
+  end
 end
