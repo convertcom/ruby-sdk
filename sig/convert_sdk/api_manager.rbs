@@ -12,6 +12,7 @@ module ConvertSdk
     @event_manager: EventManager
     @log_manager: LogManager
     @queue: VisitorsQueue
+    @flush_timer: BackgroundTimer
 
     attr_reader queue: VisitorsQueue
 
@@ -28,6 +29,12 @@ module ConvertSdk
     def release_queue: (?String? reason) -> void
 
     private
+
+    def ensure_flush_timer!: () -> void
+
+    def flush_tick: () -> void
+
+    def count_events: (Array[Hash[String, untyped]] visitors) -> Integer
 
     def build_payload: (Array[Hash[String, untyped]] visitors) -> Hash[String, untyped]
 

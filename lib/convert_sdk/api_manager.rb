@@ -74,13 +74,34 @@ module ConvertSdk
       @event_manager = event_manager
       @log_manager = log_manager
       @queue = VisitorsQueue.new(log_manager: log_manager)
+      # The SECOND and FINAL BackgroundTimer instance (architecture Decision 6 —
+      # one class, two instances: the refresh timer is 2.7's, this is the flush
+      # timer, owned here). It is built and registered with ForkGuard NOW but
+      # NEVER started in the factory (NFR4 — no threads until first use); it is
+      # lazily started on the first enqueue. A +nil+ flush_interval is the
+      # timer-off mode (BackgroundTimer#start is then a guarded no-op — the
+      # Lambda recipe for 4.6: explicit flush + size trigger still deliver).
+      @flush_timer = BackgroundTimer.new(
+        interval: @config.flush_interval,
+        log_manager: log_manager,
+        name: "flush"
+      ) { flush_tick }
+      ForkGuard.register_timer(@flush_timer)
     end
 
     # @return [VisitorsQueue] the underlying per-visitor event queue.
     attr_reader :queue
 
     # Enqueue one wire-shaped event for a visitor (delegates to the queue's
-    # per-visitor merge). Pure in-memory — never blocks the caller on I/O.
+    # per-visitor merge), then drive the two automatic delivery triggers:
+    #
+    # 1. LAZY-START the flush timer (NFR4 — the first enqueue in each process is
+    #    "first use"; idempotent + re-arms after a fork via 2.6's BackgroundTimer).
+    # 2. SIZE trigger — when the queue reaches +event_batch_size+, release with
+    #    reason +"size"+ DIRECTLY on this thread (JS api-manager.ts:197-198). The
+    #    enqueue itself is pure in-memory and the size-trigger release POSTs
+    #    OUTSIDE the queue lock, so the caller is never blocked on the network
+    #    (NFR2) — only the brief queue-lock acquisition.
     #
     # @param visitor_id [String] the visitor the event belongs to.
     # @param event [Hash{String=>Object}] a wire-shaped event hash.
@@ -89,13 +110,33 @@ module ConvertSdk
     # @return [void]
     def enqueue(visitor_id, event, segments: nil)
       @queue.enqueue(visitor_id, event, segments: segments)
+      ensure_flush_timer!
+      release_queue("size") if @queue.size >= @config.event_batch_size
     end
 
-    # Release the queue: drain-and-swap INSIDE the queue lock, then build the wire
-    # payload and POST it OUTSIDE the lock. An empty queue is a no-op. A failed
-    # POST is logged, never raised (Story 4.2 owns retention).
+    # Release the queue — the SINGLE delivery implementation all three triggers
+    # (explicit +flush+, size, interval) converge on. Drain-and-swap INSIDE the
+    # queue lock, then build the wire payload and POST it OUTSIDE the lock (the
+    # enqueue path is never blocked on network I/O — NFR2). An empty queue is a
+    # no-op.
     #
-    # @param reason [String, nil] a human-readable release reason (logged).
+    # On SUCCESS: an +info+ line and the {SystemEvents::API_QUEUE_RELEASED}
+    # lifecycle event fire with a JS-parity payload (+reason+ + visitor count).
+    #
+    # On FAILURE (a failed {HttpClient::Response} — story 1.5 returns it WITHOUT
+    # raising): the drained visitors are RE-ENQUEUED via {VisitorsQueue#requeue}
+    # (preserving per-visitor merge), a +warn+ records the retention, and NO
+    # event fires. There is NO inline retry — a frozen divergence from PHP's
+    # 3-attempt backoff; the next attempt is the next timer tick or size trigger.
+    # The bounded queue (drop-oldest + warn at the 1000 cap) keeps a sustained
+    # outage from growing host memory without bound (NFR10).
+    #
+    # Never raises into the host (NFR9): a +rescue StandardError+ logs and
+    # swallows. Note the re-enqueue happens BEFORE the rescue so a transport-layer
+    # failed Response retains; a raise from the rescue path itself (after the
+    # drain) cannot retain, but the never-crash contract takes precedence there.
+    #
+    # @param reason [String, nil] a human-readable release reason (logged + fired).
     # @return [void]
     def release_queue(reason = nil)
       visitors = @queue.drain!
@@ -106,16 +147,20 @@ module ConvertSdk
         @log_manager.info(
           "ApiManager#release_queue: queue released, reason=#{reason}, visitors=#{visitors.size}"
         )
-        @event_manager.fire(SystemEvents::API_QUEUE_RELEASED, { "reason" => reason })
-      else
-        # A failed delivery is logged and surfaced on the lifecycle event with the
-        # failure status (JS parity — api-manager.ts:240-251 fires with the error).
-        # The queue was already drained; the failed-POST RETENTION path lands in
-        # Story 4.2 — this story only guarantees no raise and an accurate signal.
-        @log_manager.warn(
-          "ApiManager#release_queue: delivery failed (status #{response.status}), reason=#{reason}"
+        @event_manager.fire(
+          SystemEvents::API_QUEUE_RELEASED,
+          { "reason" => reason, "visitors" => visitors.size }
         )
-        @event_manager.fire(SystemEvents::API_QUEUE_RELEASED, { "reason" => reason }, response.status)
+      else
+        # Failure retention (AC#3): re-enqueue the drained visitors, preserving the
+        # per-visitor merge, and warn. No event fires on failure (frozen Ruby
+        # divergence from JS, which DOES fire on failure — api-manager.ts:247).
+        # The timer loop re-arms automatically; the next tick/size trigger retries.
+        @queue.requeue(visitors)
+        @log_manager.warn(
+          "ApiManager#release_queue: delivery failed, retaining #{count_events(visitors)} events " \
+          "(status #{response.status}), reason=#{reason}"
+        )
       end
     rescue StandardError => e
       # Never-crash boundary: a delivery failure must not crash the host.
@@ -123,6 +168,26 @@ module ConvertSdk
     end
 
     private
+
+    # Lazily start the flush BackgroundTimer (NFR4 — never in the factory). Called
+    # on the first (and every) enqueue; idempotent and re-arms transparently after
+    # a fork (2.6 BackgroundTimer#start). A +nil+ flush_interval makes this a
+    # guarded no-op — no thread is ever created (timer-off mode).
+    def ensure_flush_timer!
+      @flush_timer.start
+    end
+
+    # The flush-timer tick body: release the queue with reason +"interval"+. Wrapped
+    # by BackgroundTimer's never-crash rescue (2.6); {#release_queue} additionally
+    # rescues internally so a tick never escapes.
+    def flush_tick
+      release_queue("interval")
+    end
+
+    # Total events across the given per-visitor entries (for the retention warn).
+    def count_events(visitors)
+      visitors.sum { |entry| entry["events"].size }
+    end
 
     # Build the string-keyed camelCase wire payload (boundary #2). The drained
     # visitor entries are already wire-shaped, so they ride verbatim.
