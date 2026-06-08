@@ -218,6 +218,26 @@ RSpec.describe ConvertSdk::ApiManager do
                                           ])
     end
 
+    it "retains and redelivers across a transport timeout then success (sequenced)" do
+      stub_request(:post, "#{HttpStubs::TRACK_HOST}/10025986/v1/track/sdk-key-1")
+        .with(&capture)
+        .to_timeout.then
+        .to_return(status: 200, body: JSON.generate(canned_ack), headers: json_headers)
+      api_manager.enqueue("v1", bucketing_event(experience_id: "e1", variation_id: "var1"))
+
+      api_manager.release_queue("first")  # timeout → failed Response → retained
+      expect(api_manager.queue.size).to eq(1)
+      api_manager.release_queue("second") # 200 → delivered exactly once
+
+      delivered = JSON.parse(captured_requests.last.body)
+      expect(delivered["visitors"]).to eq([
+                                            {
+                                              "visitorId" => "v1",
+                                              "events" => [bucketing_event(experience_id: "e1", variation_id: "var1")]
+                                            }
+                                          ])
+    end
+
     it "preserves per-visitor merge when new events arrive between the failure and the retry" do
       stub_request(:post, "#{HttpStubs::TRACK_HOST}/10025986/v1/track/sdk-key-1")
         .with(&capture)
