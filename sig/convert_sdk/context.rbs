@@ -12,6 +12,7 @@ module ConvertSdk
     @config: Config
     @attributes: Hash[String, untyped]
     @experience_manager: ExperienceManager?
+    @feature_manager: FeatureManager?
 
     attr_reader visitor_id: String
     attr_reader attributes: Hash[String, untyped]
@@ -24,7 +25,8 @@ module ConvertSdk
       log_manager: LogManager,
       config: Config,
       ?attributes: Hash[untyped, untyped]?,
-      ?experience_manager: ExperienceManager?
+      ?experience_manager: ExperienceManager?,
+      ?feature_manager: FeatureManager?
     ) -> void
 
     def update_visitor_properties: (Hash[untyped, untyped]? properties) -> self
@@ -37,7 +39,13 @@ module ConvertSdk
 
     def run_experiences: (?Hash[untyped, untyped]? attributes) -> Array[BucketedVariation]
 
+    def run_feature: (String key, ?Hash[untyped, untyped]? attributes) -> (BucketedFeature | Array[BucketedFeature])
+
+    def run_features: (?Hash[untyped, untyped]? attributes) -> Array[BucketedFeature]
+
     private
+
+    def disabled_feature: (String key) -> BucketedFeature
 
     def decision_attributes: (Hash[untyped, untyped]? per_call) -> Hash[Symbol, untyped]
 
