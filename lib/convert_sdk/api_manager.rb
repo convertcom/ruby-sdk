@@ -101,11 +101,22 @@ module ConvertSdk
       visitors = @queue.drain!
       return if visitors.empty?
 
-      post_payload(build_payload(visitors))
-      @log_manager.info(
-        "ApiManager#release_queue: queue released, reason=#{reason}, visitors=#{visitors.size}"
-      )
-      @event_manager.fire(SystemEvents::API_QUEUE_RELEASED, { "reason" => reason })
+      response = post_payload(build_payload(visitors))
+      if response.success?
+        @log_manager.info(
+          "ApiManager#release_queue: queue released, reason=#{reason}, visitors=#{visitors.size}"
+        )
+        @event_manager.fire(SystemEvents::API_QUEUE_RELEASED, { "reason" => reason })
+      else
+        # A failed delivery is logged and surfaced on the lifecycle event with the
+        # failure status (JS parity — api-manager.ts:240-251 fires with the error).
+        # The queue was already drained; the failed-POST RETENTION path lands in
+        # Story 4.2 — this story only guarantees no raise and an accurate signal.
+        @log_manager.warn(
+          "ApiManager#release_queue: delivery failed (status #{response.status}), reason=#{reason}"
+        )
+        @event_manager.fire(SystemEvents::API_QUEUE_RELEASED, { "reason" => reason }, response.status)
+      end
     rescue StandardError => e
       # Never-crash boundary: a delivery failure must not crash the host.
       @log_manager.error("ApiManager#release_queue: #{e.class}: #{e.message}")
@@ -125,9 +136,11 @@ module ConvertSdk
       }
     end
 
-    # POST the payload to the project-scoped track URL through the HTTP port. The
-    # port serializes the body with +JSON.generate+, applies the ConvertAgent UA,
-    # and strips a Bearer header on a non-HTTPS endpoint.
+    # POST the payload to the project-scoped track URL through the HTTP port and
+    # return the frozen {HttpClient::Response}. The port serializes the body with
+    # +JSON.generate+, applies the ConvertAgent UA, and strips a Bearer header on a
+    # non-HTTPS endpoint. The port NEVER raises — a transport failure comes back as
+    # a failed Response (+success? == false+), so the caller branches on the result.
     def post_payload(payload)
       @http_client.request(method: :post, url: track_url, headers: auth_headers, body: payload)
     end

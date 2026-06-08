@@ -31,7 +31,7 @@ module ConvertSdk
 
     def build_payload: (Array[Hash[String, untyped]] visitors) -> Hash[String, untyped]
 
-    def post_payload: (Hash[String, untyped] payload) -> void
+    def post_payload: (Hash[String, untyped] payload) -> HttpClient::Response
 
     def track_url: () -> String
 
