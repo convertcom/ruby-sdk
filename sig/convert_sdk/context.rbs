@@ -69,7 +69,11 @@ module ConvertSdk
 
     def decision_attributes: (Hash[untyped, untyped]? per_call) -> Hash[Symbol, untyped]
 
-    def fire_bucketing: (untyped experience_key, BucketedVariation variation) -> void
+    def fire_bucketing: (untyped experience_key, BucketedVariation variation, ?track: bool) -> void
+
+    def suppress_bucketing_enqueue?: (bool track) -> bool
+
+    def tracking_enabled_for_call?: (Hash[untyped, untyped]? attributes) -> bool
 
     def enqueue_bucketing_event: (BucketedVariation variation) -> void
 
