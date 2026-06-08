@@ -51,7 +51,17 @@ module ConvertSdk
 
     def run_custom_segments: (Array[String] segment_keys, ?Hash[untyped, untyped]? attributes) -> Sentinel?
 
+    def track_conversion: (
+      String goal_key,
+      ?goal_data: Hash[untyped, untyped]?,
+      ?force_multiple_transactions: bool
+    ) -> self
+
     private
+
+    def fire_conversion: (String goal_key, Hash[String, untyped] data) -> void
+
+    def enqueue_conversion_event: (Hash[String, untyped] data) -> void
 
     def visitor_properties: (Hash[untyped, untyped]? attributes) -> Hash[String, untyped]
 

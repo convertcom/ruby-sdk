@@ -74,7 +74,26 @@ module ConvertSdk
       ?Hash[Symbol, untyped] attributes
     ) -> (BucketedVariation | Sentinel)
 
+    def convert: (
+      String visitor_id,
+      String goal_key,
+      ?goal_data: Hash[untyped, untyped]?,
+      ?force_multiple_transactions: bool
+    ) -> Hash[String, untyped]?
+
     private
+
+    def dedup_and_mark: (String visitor_id, String goal_id, bool force) -> bool
+
+    def resolve_dedup: (String goal_id, untyped already, bool force) -> [ bool, Hash[String, untyped] ]
+
+    def goal_marked?: (Hash[String, untyped] current, String goal_id) -> untyped
+
+    def build_conversion_data: (String visitor_id, String goal_id, Hash[untyped, untyped]? goal_data) -> Hash[String, untyped]
+
+    def goal_data_pairs: (Hash[untyped, untyped]? goal_data) -> Array[Hash[String, untyped]]
+
+    def stored_bucketing_map: (String visitor_id) -> Hash[String, untyped]
 
     def match_rules_by_field: (String visitor_id, String experience_key, Hash[Symbol, untyped] attributes) -> (Hash[String, untyped] | Sentinel | nil)
 
