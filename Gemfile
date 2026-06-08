@@ -33,8 +33,12 @@ gem "rubocop-performance", require: false
 # without attempting the C-extension build. The CRuby `typecheck` job installs
 # this group and runs `rbs validate` + `steep check`.
 group :typecheck do
-  gem "rbs", require: false
-  gem "steep", require: false
+  # Pinned with pessimistic constraints (qs-03 / D9): a minor bump cannot
+  # silently flip the gate's verdict. Versions currently resolving green:
+  # rbs 4.0.2, steep 2.0.0. No Gemfile.lock committed (matrix design) —
+  # pessimistic constraint is the only pin.
+  gem "rbs", "~> 4.0", require: false
+  gem "steep", "~> 2.0", require: false
 end
 
 # Documentation

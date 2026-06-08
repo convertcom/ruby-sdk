@@ -1,0 +1,49 @@
+# RBS method signatures for the config-contract drift probe helpers (qs-03).
+# These are COMPILE-TIME ONLY declarations — the methods are never called at
+# runtime; the probe file that calls them lives outside lib/ and is never
+# required by the SDK.
+#
+# Each helper accepts a specific generated record type. The probe passes hash
+# literals (containing every field the SDK depends on) to these methods. With
+# strict diagnostics in the :probe Steepfile target, Steep raises
+# ArgumentTypeMismatch when the hash literal includes a key not in the record
+# — i.e. when the regenerated RBS has REMOVED a field the SDK depends on.
+#
+# This is the mechanism that makes the drift gate fire: a removed field in the
+# regenerated RBS causes the probe's hash literal to be "unknown" to the new
+# record, which Steep reports as an error on the probe line.
+
+module ConvertSdk
+  # Probe helper: validates that config_response_data carries the expected top-level keys.
+  def self.probe_response_data_fields: (config_response_data) -> void
+
+  # Probe helper: validates config_project fields.
+  def self.probe_project_fields: (config_project) -> void
+
+  # Probe helper: validates config_experience fields.
+  def self.probe_experience_fields: (config_experience) -> void
+
+  # Probe helper: validates experience_variation fields.
+  def self.probe_variation_fields: (experience_variation) -> void
+
+  # Probe helper: validates config_goal fields.
+  def self.probe_goal_fields: (config_goal) -> void
+
+  # Probe helper: validates config_audience fields.
+  def self.probe_audience_fields: (config_audience) -> void
+
+  # Probe helper: validates config_location fields.
+  def self.probe_location_fields: (config_location) -> void
+
+  # Probe helper: validates config_segment fields.
+  def self.probe_segment_fields: (config_segment) -> void
+
+  # Probe helper: validates config_feature fields.
+  def self.probe_feature_fields: (config_feature) -> void
+
+  # Probe helper: validates feature_variable fields.
+  def self.probe_variable_fields: (feature_variable) -> void
+
+  # Probe helper: validates experience_integration_ga_serving fields.
+  def self.probe_ga_fields: (experience_integration_ga_serving) -> void
+end

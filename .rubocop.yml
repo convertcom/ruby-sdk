@@ -8,6 +8,8 @@ AllCops:
   Exclude:
     - "bin/**/*"
     - "vendor/**/*"
+    # RBS signature files are not Ruby; exclude from all cops.
+    - "**/*.rbs"
     # The demo Rails app (Story 5.2) is an APP, not the gem's lib — it lives
     # under demo/ purely to exercise the SDK end-to-end under a real Puma cluster.
     # It must NOT enter the gem's quality gates (RuboCop here, SimpleCov coverage,
@@ -179,3 +181,11 @@ Style/StructInheritance:
     - "lib/convert_sdk/bucketed_variation.rb"
     - "lib/convert_sdk/bucketed_feature.rb"
     - "lib/convert_sdk/http_client.rb"
+
+# The steep/ directory holds the build-time config-contract probe (qs-03). The
+# probe re-opens `module ConvertSdk` as a CI-only utility file (OUTSIDE lib/,
+# never required at runtime). The module is already documented in lib/
+# convert_sdk.rb; the probe re-opening does not warrant a second top-level doc.
+Style/Documentation:
+  Exclude:
+    - "steep/**/*"

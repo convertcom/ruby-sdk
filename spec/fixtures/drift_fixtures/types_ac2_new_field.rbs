@@ -1,0 +1,130 @@
+# AUTO-GENERATED FROM backend apiDoc/serving — DO NOT EDIT. Regenerate via the serving workflow.
+
+# AC2 ADDITIVE-SAFE FIXTURE — new field added to config_goal + new discriminator value.
+#
+# This fixture is a MUTATED copy of sig/convert_sdk/config/generated/types.rbs
+# with (a) a new field "new_platform_field" added to config_goal and (b) a new
+# goal_type discriminator value "new_goal_type" added to the union.
+# It demonstrates that additive changes to the generated RBS do NOT break the
+# contract probe or the runtime SDK.
+#
+# Reproduction steps (AC2 proof):
+#   1. cp spec/fixtures/drift_fixtures/types_ac2_new_field.rbs \
+#         sig/convert_sdk/config/generated/types.rbs
+#   2. bundle exec steep check   → MUST remain "No type error detected"
+#      (The probe does not access "new_platform_field"; Steep does not complain
+#       about undeclared keys in lenient records.)
+#   3. bundle exec rspec          → MUST remain green
+#      (Runtime readers use plain-hash string-key access; unknown keys are
+#       silently ignored via fetch(name, nil) / collection(name) defaults.)
+#   4. Restore: cp sig/convert_sdk/config/generated/types.rbs back from git
+#      (git checkout sig/convert_sdk/config/generated/types.rbs)
+#
+# This proves: neither the build-time gate nor the runtime breaks when the
+# backend spec adds new fields or new discriminator values (additive-safe).
+
+module ConvertSdk
+  type rule_object = untyped
+
+  # ADDITIVE: "new_goal_type" added as a new discriminator value.
+  type goal_type = "dom_interaction" | "scroll_percentage" | "revenue" | "advanced" | "visits_page" | "code_trigger" | "ga_import" | "submits_form" | "clicks_link" | "clicks_element" | "new_goal_type"
+
+  type feature_variable_type = "boolean" | "float" | "json" | "integer" | "string"
+
+  type ga_integration_type = "ga3" | "ga4"
+
+  type feature_variable = {
+    "key" => String?,
+    "type" => feature_variable_type?
+  }
+
+  type config_feature = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "variables" => Array[feature_variable]?
+  }
+
+  type experience_variation = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "traffic_allocation" => Numeric?,
+    "status" => String?,
+    "changes" => Array[untyped]?
+  }
+
+  type config_experience = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "type" => String?,
+    "status" => String?,
+    "variations" => Array[experience_variation]?,
+    "goals" => Array[String]?,
+    "locations" => untyped,
+    "audiences" => untyped,
+    "site_area" => rule_object,
+    "environment" => String?,
+    "integrations" => Array[untyped]?
+  }
+
+  # ADDITIVE: "new_platform_field" added — probe does not access it; steep stays green.
+  type config_goal = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "type" => goal_type?,
+    "rules" => rule_object,
+    "new_platform_field" => String?
+  }
+
+  type config_audience = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "type" => String?,
+    "rules" => rule_object
+  }
+
+  type config_location = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "rules" => rule_object
+  }
+
+  type config_segment = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "rules" => rule_object
+  }
+
+  type config_project = {
+    "id" => String?,
+    "name" => String?,
+    "type" => String?
+  }
+
+  type config_response_data = {
+    "account_id" => String?,
+    "project" => config_project?,
+    "goals" => Array[config_goal]?,
+    "locations" => Array[config_location]?,
+    "audiences" => Array[config_audience]?,
+    "segments" => Array[config_segment]?,
+    "experiences" => Array[config_experience]?,
+    "features" => Array[config_feature]?
+  }
+
+  type experience_integration_ga_serving = {
+    "type" => ga_integration_type?,
+    "enabled" => bool?
+  }
+
+  type ga_settings = {
+    "type" => ga_integration_type?,
+    "enabled" => bool?
+  }
+end
