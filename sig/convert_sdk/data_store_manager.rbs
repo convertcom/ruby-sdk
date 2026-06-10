@@ -1,0 +1,31 @@
+module ConvertSdk
+  # The single persistence port every manager flows through.
+  class DataStoreManager
+    REQUIRED_STORE_METHODS: Array[Symbol]
+
+    attr_reader store: untyped
+
+    @log_manager: LogManager
+    @merge_mutex: Thread::Mutex
+
+    def initialize: (log_manager: LogManager, ?store: untyped?) -> void
+
+    def get: (String key) -> untyped
+
+    def set: (String key, untyped value) -> void
+
+    def visitor_key: (String account_id, String project_id, String visitor_id) -> String
+
+    def config_key: (String sdk_key) -> String
+
+    def merge_visitor_data: (String account_id, String project_id, String visitor_id) { (Hash[String, untyped] current) -> Hash[String, untyped]? } -> Hash[String, untyped]
+
+    private
+
+    def resolve_store: (untyped store) -> untyped
+
+    def valid_store?: (untyped store) -> bool
+
+    def deep_merge: (Hash[String, untyped] base, Hash[String, untyped] incoming) -> Hash[String, untyped]
+  end
+end
