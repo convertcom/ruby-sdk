@@ -36,3 +36,12 @@ Metrics/BlockLength:
 
 Metrics/MethodLength:
   Max: 20
+
+# MurmurHash3 uses the canonical algorithm variable names from Austin Appleby's
+# reference implementation (h1 = hash state, k1 = block key). Renaming them would
+# break the line-by-line auditability of the vendored implementation against the
+# reference, so they are explicitly allowed as method parameter names.
+Naming/MethodParameterName:
+  AllowedNames:
+    - h1
+    - k1
