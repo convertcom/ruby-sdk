@@ -1,0 +1,43 @@
+module ConvertSdk
+  # The audience/segmentation rule walk — OR -> AND -> OR_WHEN — ported exactly
+  # from the JS SDK rule-manager.ts. JS is the only truth; PHP is quarantined.
+  # @api private
+  class RuleManager
+    # The RULE_NOT_VALID message, byte-identical to the JS dictionary.
+    RULE_NOT_VALID: String
+
+    @keys_case_sensitive: bool
+    @comparisons: untyped
+    @log_manager: LogManager?
+
+    def initialize: (config: Config, ?comparisons: untyped, ?log_manager: LogManager?) -> void
+
+    # Walk a rule set against a data hash; the top OR level. Returns true/false or
+    # a RuleError sentinel propagated from a leaf.
+    def is_rule_matched: (Hash[String, untyped] data, untyped rule_set, ?String? log_entry) -> (bool | Sentinel)
+
+    private
+
+    def process_and: (Hash[String, untyped] data, untyped and_group) -> (bool | Sentinel)
+
+    def process_or_when: (Hash[String, untyped] data, untyped or_when) -> (bool | Sentinel)
+
+    def process_rule_item: (Hash[String, untyped] data, untyped rule) -> (bool | Sentinel)
+
+    def evaluate_leaf: (Hash[String, untyped] data, untyped rule, String match_type, Symbol method, bool negation) -> (bool | Sentinel)
+
+    def lookup_data_value: (Hash[String, untyped] data, untyped rule_key) -> untyped
+
+    def debug_outcome: (String path, String match_type, untyped result) -> void
+
+    def valid_rule?: (untyped rule) -> bool
+
+    def existence_operator?: (untyped match_type) -> bool
+
+    def nonempty_block: (untyped container, String key) -> Array[untyped]?
+
+    def warn_rule_not_valid: (String site, ?String? log_entry) -> void
+
+    def log_outcome: (String site, untyped match, String? log_entry) -> void
+  end
+end
