@@ -117,6 +117,7 @@ module ConvertSdk
     #   when this enqueue first creates the visitor's queue entry.
     # @return [void]
     def enqueue(visitor_id, event, segments: nil)
+      guard_fork_boundary
       @queue.enqueue(visitor_id, event, segments: segments)
       ensure_flush_timer!
       release_queue("size") if @queue.size >= @config.event_batch_size
@@ -205,7 +206,7 @@ module ConvertSdk
       return unless ForkGuard.forked?
 
       @log_manager.debug(
-        "ApiManager#release_queue: stale process detected (fork/daemon bypass), re-arming"
+        "ApiManager: stale process detected (fork/daemon bypass), re-arming"
       )
       ForkGuard.rearm!
     end
