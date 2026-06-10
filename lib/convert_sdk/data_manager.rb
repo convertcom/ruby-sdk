@@ -39,21 +39,74 @@ module ConvertSdk
   # +false+. The client constructs successfully even when the first fetch fails;
   # decision methods (Story 2.11) key off these sentinels.
   #
-  # == Config caching
+  # == Config caching & TTL bookkeeping (Story 2.7)
   #
-  # Install here is in-memory only. Writing the snapshot through to the
-  # {DataStoreManager} cache (with TTL) and the lazy refresh path are Story 2.7's
-  # concern; this story holds the in-memory snapshot and the +ready+-once trigger.
+  # Every successful install ALSO writes the config through to the injected
+  # {DataStoreManager} under +convert_sdk.config.{sdkKey}+ (2.1's single key
+  # builder) wrapped as +{"config" => envelope, "fetched_at" => wall_clock}+.
+  # The store has no native TTL, so a *wall-clock* +fetched_at+ is stored for
+  # cross-process staleness (a Redis-backed cold start can serve a fresh shared
+  # entry without fetching). Independently, an in-process *monotonic* timestamp
+  # ({#install_config} records it via the injected +clock+) drives the
+  # decision-time TTL check ({#ensure_fresh_config!}) so wall-clock jumps can
+  # never expire a live snapshot. Monotonic for in-process TTL, wall-clock for
+  # the cross-process cache entry — two clocks, two purposes.
+  #
+  # == Lazy-TTL fallback (timer-off mode)
+  #
+  # When the background refresh timer is disabled (+data_refresh_interval: nil+),
+  # {#ensure_fresh_config!} performs an on-demand staleness check at decision
+  # entry points (PHP semantics): a snapshot older than +ttl+ triggers a
+  # synchronous refetch (via the injected +refetch+ callable) BEFORE deciding;
+  # a failed refetch keeps serving the stale snapshot (the callable warns). The
+  # refetch is guarded by a SEPARATE +@fetch_mutex+ (NOT the config mutex), so
+  # concurrent stale deciders collapse to ONE fetch (thundering-herd guard) and
+  # the HTTP I/O never holds the config mutex.
   class DataManager
     # @param log_manager [LogManager] injected logger for install diagnostics.
-    def initialize(log_manager:)
+    # @param data_store_manager [DataStoreManager, nil] persistence port for the
+    #   config cache write; nil disables the write (standalone unit construction).
+    # @param config_key [String, nil] the cache key +convert_sdk.config.{sdkKey}+
+    #   (built once by {DataStoreManager#config_key}); nil disables the cache.
+    # @param ttl [Numeric, nil] the configured +data_refresh_interval+ in seconds.
+    #   A non-nil value is timer-ON mode (the background timer keeps config fresh,
+    #   so {#ensure_fresh_config!} is a no-op); +nil+ is timer-OFF mode (Lambda /
+    #   CLI), which enables the decision-time on-demand refetch and falls the
+    #   effective staleness threshold back to {ConvertSdk::DEFAULT_CONFIG_TTL}
+    #   (timer-off ≠ TTL-off). The timer-off mode is thus derived from +ttl.nil?+.
+    # @param clock [#call] a monotonic time source (seconds, Float) for in-process
+    #   TTL math; defaults to +Process.clock_gettime(Process::CLOCK_MONOTONIC)+.
+    # @param refetch [#call, nil] a callable performing one full refresh cycle
+    #   (HTTP refetch + install + warn-on-failure) for the synchronous timer-off
+    #   path; injected by {Client} after construction (it owns the HTTP I/O and
+    #   the lifecycle event). Invoked under the thundering-herd fetch mutex.
+    def initialize(log_manager:, data_store_manager: nil, config_key: nil, ttl: nil,
+                   clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }, refetch: nil)
       @log_manager = log_manager
+      @data_store_manager = data_store_manager
+      @config_key = config_key
+      @ttl = ttl
+      # Timer-off (Lambda/CLI) mode is exactly "no refresh interval configured".
+      @timer_off = ttl.nil?
+      @clock = clock
+      @refetch = refetch
       # The deep-frozen config envelope, or nil before the first install. Read
       # lock-free by every reader; replaced atomically under @config_mutex.
       @config = nil #: Hash[String, untyped]?
-      # Thread safety: guarded by @config_mutex (install/swap only).
+      # The monotonic timestamp of the live snapshot's install, or nil pre-config.
+      @fetched_at = nil #: Float?
+      # Thread safety: guarded by @config_mutex (install/swap + @fetched_at).
       @config_mutex = Thread::Mutex.new
+      # Thundering-herd guard for the synchronous timer-off refetch — a SEPARATE
+      # mutex so the HTTP refetch never holds the config mutex.
+      @fetch_mutex = Thread::Mutex.new
     end
+
+    # The synchronous timer-off refresh callable, injected by {Client} after
+    # construction (Client owns the single HTTP port and the lifecycle event).
+    # Performs one full refresh cycle (refetch + install + warn-on-failure).
+    # @return [#call, nil]
+    attr_accessor :refetch
 
     # Install a parsed config envelope as the live snapshot.
     #
@@ -80,13 +133,77 @@ module ConvertSdk
       end
 
       frozen = deep_freeze(hash)
+      now = @clock.call
       first = @config_mutex.synchronize do
         was_absent = @config.nil?
         @config = frozen
+        @fetched_at = now
         was_absent
       end
+      cache_config(frozen)
       @log_manager.info("DataManager#install_config: config installed")
       first ? :first : :updated
+    end
+
+    # Install a non-stale cached config entry from the store as the live snapshot
+    # — the cross-process warm-start fallback used by {Client} when the initial
+    # fetch fails. The entry is +{"config" => envelope, "fetched_at" => wall}+;
+    # it is only installed when its WALL-CLOCK age is within +ttl+ (or the
+    # default TTL when +ttl+ is nil — timer-off mode). A stale or absent entry
+    # is ignored (returns nil). On a successful install an info line records the
+    # cache hit.
+    #
+    # @return [Symbol, nil] the {#install_config} marker on a fresh cache hit,
+    #   or nil when no fresh entry was available.
+    def install_from_cache_if_fresh
+      entry = cached_entry
+      return nil unless entry
+
+      fetched_at = entry["fetched_at"]
+      config = entry["config"]
+      return nil unless fetched_at.is_a?(Numeric) && config.is_a?(Hash)
+      return nil if (Time.now.to_f - fetched_at) > effective_ttl
+
+      marker = install_config(config)
+      return nil unless marker.is_a?(Symbol)
+
+      @log_manager.info("DataManager#install_from_cache_if_fresh: serving cached config")
+      marker
+    end
+
+    # Decision-time TTL check for timer-off mode (AC#3, PHP semantics). When a
+    # +ttl+ is configured and the live snapshot is older than it (by the
+    # monotonic clock), synchronously refetch via the injected callable BEFORE
+    # the caller decides. Guarded by the SEPARATE @fetch_mutex so concurrent
+    # stale deciders collapse to ONE fetch; the refetch (HTTP I/O) runs OUTSIDE
+    # the config mutex. A failed refetch keeps the stale snapshot (the callable
+    # warns). A no-op when no ttl/refetch is wired or the snapshot is fresh.
+    # @return [void]
+    def ensure_fresh_config!
+      return unless @timer_off
+
+      refetch = @refetch
+      return if refetch.nil?
+      return unless config_stale?
+
+      @fetch_mutex.synchronize do
+        # Re-check inside the lock: a racing decider may have refreshed already.
+        return unless config_stale?
+
+        # The callable performs the full cycle (refetch + install + warn). On
+        # success it installs (advancing @fetched_at, so racing deciders that
+        # re-check see fresh); on failure it warns and the stale snapshot stays.
+        refetch.call
+      end
+    end
+
+    # @return [Boolean] true when a snapshot exists and its monotonic age exceeds
+    #   the configured ttl (or the default ttl when ttl is nil).
+    def config_stale?
+      fetched_at = @config_mutex.synchronize { @fetched_at }
+      return false if fetched_at.nil?
+
+      (@clock.call - fetched_at) > effective_ttl
     end
 
     # @return [Boolean] true once a config snapshot has been installed.
@@ -159,6 +276,35 @@ module ConvertSdk
     end
 
     private
+
+    # Write the freshly-installed config through to the store, wrapped with a
+    # WALL-CLOCK +fetched_at+ for cross-process staleness. A no-op when no store
+    # or key is wired (standalone unit construction). The DataStoreManager
+    # contains any store failure (logged), so this never crashes an install.
+    def cache_config(frozen)
+      store = @data_store_manager
+      key = @config_key
+      return if store.nil? || key.nil?
+
+      store.set(key, { "config" => frozen, "fetched_at" => Time.now.to_f })
+    end
+
+    # Read the raw cache entry from the store, or nil when no store/key is wired
+    # or nothing is cached.
+    def cached_entry
+      store = @data_store_manager
+      key = @config_key
+      return nil if store.nil? || key.nil?
+
+      entry = store.get(key)
+      entry.is_a?(Hash) ? entry : nil
+    end
+
+    # The staleness threshold: the configured ttl, or the SDK default (300s) in
+    # timer-off mode (ttl nil ≠ TTL-off — Lambda converges on the same cadence).
+    def effective_ttl
+      @ttl || ConvertSdk::DEFAULT_CONFIG_TTL
+    end
 
     # The frozen +"data"+ sub-hash of the live snapshot, or nil pre-config.
     # Read lock-free: @config is either nil or a fully-frozen graph.

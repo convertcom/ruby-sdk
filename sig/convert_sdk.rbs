@@ -1,8 +1,14 @@
 module ConvertSdk
+  # The default config-cache TTL in seconds for the timer-off lazy-TTL fallback.
+  DEFAULT_CONFIG_TTL: Integer
+
   # The SDK's base error type (namespace anchor; no runtime exception hierarchy).
   class Error < StandardError
   end
 
   # Build an SDK client from an SDK key (fetch) or a pre-fetched data object.
-  def self.create: (?sdk_key: String?, ?data: Hash[untyped, untyped]?, ?store: untyped?, **untyped options) -> Client
+  def self.create: (?sdk_key: String?, ?data: Hash[untyped, untyped]?, ?store: untyped?, ?clock: (^() -> Float)?, **untyped options) -> Client
+
+  # Build the DataManager wired with the Story 2.7 config-cache surface.
+  def self.build_data_manager: (Config config, LogManager log_manager, DataStoreManager data_store_manager, (^() -> Float)? clock) -> DataManager
 end

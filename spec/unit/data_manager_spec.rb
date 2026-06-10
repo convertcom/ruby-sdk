@@ -2,6 +2,21 @@
 
 require "spec_helper"
 
+# A controllable monotonic clock for deterministic TTL math (no real sleeps).
+class StubClock
+  def initialize(now = 5000.0)
+    @now = now
+  end
+
+  def call
+    @now
+  end
+
+  def advance(seconds)
+    @now += seconds
+  end
+end
+
 RSpec.describe ConvertSdk::DataManager do
   let(:sink) { CapturingSink.new }
   let(:log_manager) do
@@ -168,6 +183,115 @@ RSpec.describe ConvertSdk::DataManager do
         expect(snapshot).to be_frozen
         expect(snapshot.size).to eq(data["experiences"].size)
       end
+    end
+  end
+
+  # --- Story 2.7: cache write + TTL bookkeeping ------------------------------
+
+  let(:store) { ConvertSdk::Stores::MemoryStore.new }
+  let(:dsm) { ConvertSdk::DataStoreManager.new(log_manager: log_manager, store: store) }
+  let(:cache_key) { dsm.config_key("sdk-key-1") }
+  let(:clock) { StubClock.new }
+
+  # A DataManager wired with the cache + TTL surface (Story 2.7). Timer-off mode
+  # is derived from a nil ttl (matching the production wiring), so a nil ttl both
+  # enables the decision-time check and uses the default 300s staleness window.
+  def caching_manager(ttl: 300, refetch: nil)
+    described_class.new(
+      log_manager: log_manager, data_store_manager: dsm, config_key: cache_key,
+      ttl: ttl, clock: clock, refetch: refetch
+    )
+  end
+
+  describe "#install_config — config cache write (Story 2.7 AC#1)" do
+    it "writes the config under the byte-exact key with a wall-clock fetched_at" do
+      caching_manager.install_config(config)
+      entry = store.get(cache_key)
+      expect(entry["config"]).to eq(config)
+      expect(entry["fetched_at"]).to be_a(Float)
+    end
+
+    it "does not write to a store when no data_store_manager is wired" do
+      manager.install_config(config)
+      expect(store.get(cache_key)).to be_nil
+    end
+  end
+
+  describe "#config_stale? (monotonic TTL)" do
+    it "is false right after install and true once the ttl elapses" do
+      m = caching_manager(ttl: 300)
+      m.install_config(config)
+      expect(m.config_stale?).to be(false)
+      clock.advance(301)
+      expect(m.config_stale?).to be(true)
+    end
+
+    it "is false before any config is installed" do
+      expect(caching_manager.config_stale?).to be(false)
+    end
+
+    it "uses the default 300s TTL in timer-off mode (ttl nil)" do
+      m = caching_manager(ttl: nil)
+      m.install_config(config)
+      clock.advance(ConvertSdk::DEFAULT_CONFIG_TTL - 1)
+      expect(m.config_stale?).to be(false)
+      clock.advance(2)
+      expect(m.config_stale?).to be(true)
+    end
+  end
+
+  describe "#install_from_cache_if_fresh" do
+    it "installs a non-stale cached entry and returns the :first marker" do
+      store.set(cache_key, { "config" => config, "fetched_at" => Time.now.to_f })
+      m = caching_manager
+      expect(m.install_from_cache_if_fresh).to eq(:first)
+      expect(m.account_id).to eq("10022898")
+    end
+
+    it "ignores a stale cached entry" do
+      store.set(cache_key, { "config" => config, "fetched_at" => Time.now.to_f - 1000 })
+      expect(caching_manager(ttl: 300).install_from_cache_if_fresh).to be_nil
+    end
+
+    it "ignores an absent or malformed cached entry" do
+      expect(caching_manager.install_from_cache_if_fresh).to be_nil
+      store.set(cache_key, { "config" => "not-a-hash", "fetched_at" => Time.now.to_f })
+      expect(caching_manager.install_from_cache_if_fresh).to be_nil
+    end
+  end
+
+  describe "#ensure_fresh_config! (timer-off decision-time check)" do
+    it "is a no-op when the timer is enabled (ttl present)" do
+      called = 0
+      m = caching_manager(ttl: 300, refetch: -> { called += 1 })
+      m.install_config(config)
+      clock.advance(1000)
+      m.ensure_fresh_config!
+      expect(called).to eq(0)
+    end
+
+    it "is a no-op when no refetch callable is wired" do
+      m = caching_manager(ttl: nil, refetch: nil)
+      m.install_config(config)
+      clock.advance(1000)
+      expect { m.ensure_fresh_config! }.not_to raise_error
+    end
+
+    it "invokes the refetch callable once when stale (timer-off)" do
+      called = 0
+      m = caching_manager(ttl: nil, refetch: -> { called += 1 })
+      m.install_config(config)
+      clock.advance(1000)
+      m.ensure_fresh_config!
+      expect(called).to eq(1)
+    end
+
+    it "does not refetch when the config is still fresh" do
+      called = 0
+      m = caching_manager(ttl: nil, refetch: -> { called += 1 })
+      m.install_config(config)
+      m.ensure_fresh_config!
+      expect(called).to eq(0)
     end
   end
 end
