@@ -1,0 +1,47 @@
+# Release-blocking Puma-cluster fork-safety smoke (NFR11).
+#
+# THE flagship-claim proof: events tracked from BOTH forked Puma workers arrive
+# at the track endpoint with ZERO fork-handling code in the demo app. This is a
+# DEDICATED workflow (structurally independent, like the parity / full-chain
+# gates in qa.yml) so a failure here is unambiguously "fork safety regressed" and
+# cannot be masked by an unrelated unit-test or coverage failure.
+#
+# Runs on pull_request + push so it appears as a check on every PR and on main.
+# This adds a NEW required check — see demo/rails/README.md "Branch protection".
+#
+# The smoke is OFFLINE: it boots the demo against a local stdlib stub server (no
+# live Convert calls), so it is deterministic and needs no staging secrets.
+name: Demo Fork Smoke
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  fork-smoke:
+    name: Puma-cluster fork smoke (release-blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          # The demo's Gemfile (demo/rails/Gemfile) is a SEPARATE bundle from the
+          # gem's — it pulls Rails + Puma and the path-resolved convert_sdk gem.
+          # No committed Gemfile.lock (per-job resolution); bundler-cache handles it.
+          bundler-cache: true
+          working-directory: demo/rails
+
+      - name: Run the fork-safety smoke
+        working-directory: demo/rails
+        # The script boots the real Puma cluster (workers 2 + preload_app!),
+        # drives both workers, and asserts tracked events from >= 2 distinct
+        # worker PIDs reached the stub. Nonzero exit = fork safety regressed.
+        run: bundle exec ruby script/fork_smoke.rb

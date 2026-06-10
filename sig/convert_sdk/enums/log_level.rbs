@@ -1,0 +1,16 @@
+module ConvertSdk
+  # Logging verbosity levels (JS-parity integer values 0-5).
+  module LogLevel
+    TRACE: Integer
+
+    DEBUG: Integer
+
+    INFO: Integer
+
+    WARN: Integer
+
+    ERROR: Integer
+
+    SILENT: Integer
+  end
+end

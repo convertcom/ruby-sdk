@@ -1,0 +1,49 @@
+module ConvertSdk
+  # The single hardened HTTP port every SDK request flows through.
+  class HttpClient
+    USER_AGENT: String
+    FAILURE_STATUS: Integer
+
+    # An immutable result of a single HTTP request.
+    class Response < Struct[untyped]
+      attr_reader status: Integer
+      attr_reader body: untyped
+      attr_reader headers: Hash[String, String]
+
+      # Explicit keyword constructor so Steep resolves +Response.new(status:, …)+
+      # at the (steep-checked) lib call sites — the base +Struct+ +new+ overloads
+      # describe Struct *definition*, not this subclass's keyword instantiation.
+      def self.new: (?status: Integer, ?body: untyped, ?headers: Hash[String, String]) -> Response
+
+      def initialize: (**untyped) -> void
+
+      def success?: () -> bool
+    end
+
+    @log_manager: LogManager
+    @open_timeout: (Float | Integer)
+    @read_timeout: (Float | Integer)
+
+    def initialize: (log_manager: LogManager, open_timeout: (Float | Integer), read_timeout: (Float | Integer)) -> void
+
+    def request: (method: Symbol, url: String, ?headers: Hash[String, String], ?body: Hash[untyped, untyped]?) -> Response
+
+    private
+
+    def perform: (Symbol method, URI::Generic uri, bool https, Hash[String, String] wire_headers, Hash[untyped, untyped]? body) -> Response
+
+    def build_headers: (Hash[String, String] headers, bool https) -> Hash[String, String]
+
+    def guard_bearer: (Hash[String, String] headers, bool https) -> void
+
+    def build_request: (Symbol method, URI::Generic uri, Hash[String, String] wire_headers, Hash[untyped, untyped]? body) -> untyped
+
+    def build_response: (untyped net_response) -> Response
+
+    def parse_body: (String? raw) -> untyped
+
+    def flatten_headers: (untyped net_response) -> Hash[String, String]
+
+    def failed_response: () -> Response
+  end
+end

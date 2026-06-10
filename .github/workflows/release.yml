@@ -1,0 +1,137 @@
+name: Release
+
+# Triggered by a successful "Quality Checks" run on `main`, via `workflow_run`.
+# Using `workflow_run` (instead of `push` or `release` triggers) guarantees that
+# the full QA suite (lint, typecheck, the matrix RSpec, parity, full-chain, and
+# the gem-smoke build) has PASSED before we attempt to publish to RubyGems.org —
+# so broken code never reaches consumers. Mirrors the Convert PHP/Android SDK
+# release.yml pattern.
+#
+# WORKFLOW-NAME COUPLING (LOAD-BEARING): the value below must match qa.yml's
+# `name:` EXACTLY ("Quality Checks"). Renaming either side silently breaks
+# releases — `workflow_run` would never fire. qa.yml carries the mirror comment.
+on:
+  workflow_run:
+    workflows: ['Quality Checks']
+    types: [completed]
+    branches: [main]
+
+# Least-privilege token. EXACTLY two scopes:
+#   contents: write  — semantic-release pushes the `vX.Y.Z` tag and creates the
+#                      GitHub Release via the API. It does NOT push any commit to
+#                      `main` (no @semantic-release/git; the branch ruleset would
+#                      reject a commit-back — GH013). Only the tag ref + the
+#                      Release are written.
+#   id-token: write  — RUBY-SPECIFIC DIVERGENCE from the PHP SDK (which has only
+#                      contents:write). Required for OIDC Trusted Publishing:
+#                      `rubygems/configure-rubygems-credentials` exchanges the
+#                      workflow's OIDC token for a short-lived RubyGems credential
+#                      (FR67 / NFR8). NO long-lived API-key secret exists anywhere.
+# issues:write / pull-requests:write are INTENTIONALLY OMITTED — the
+# @semantic-release/github plugin's comment/label features (which need them) are
+# all disabled in release.config.mjs (successComment/failComment/failTitle/
+# releasedLabels: false). (Android qs-03 / TD-2.)
+permissions:
+  contents: write
+  id-token: write
+
+# Serialize releases. If two pushes land on main in quick succession, the second
+# workflow_run waits for the first to finish before starting — we must not have
+# two `gem push` invocations racing to upload the same version, or two
+# @semantic-release/github instances racing to create the tag + Release.
+# `cancel-in-progress: false` because cancelling a mid-publish workflow can leave
+# a half-pushed gem state that needs manual cleanup. (Mirrors the Android SDK —
+# the PHP SDK release.yml has no concurrency block.)
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Semantic Release → RubyGems.org
+    runs-on: ubuntu-latest
+    # Twin guards (both required):
+    #   (1) workflow_run.conclusion == 'success' → QA actually passed
+    #       (workflow_run fires on `completed` regardless of outcome).
+    #   (2) workflow_run.event == 'push' → the QA run that triggered us was on a
+    #       push to main, not a pull_request. FORK PRs fire `pull_request` events
+    #       and do NOT carry secret/OIDC access; triggering release on them would
+    #       fail or risk leaking into PR logs. DO NOT REMOVE THIS GUARD.
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          # semantic-release analyzes all commits since the last tag; the default
+          # shallow clone (depth 1) would blind it. Tags are fetched too so the
+          # last-release point is known.
+          fetch-depth: 0
+          # Required so semantic-release can push the `vX.Y.Z` tag back to origin
+          # using GITHUB_TOKEN. Only the tag is pushed — no commit to `main`.
+          persist-credentials: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Ruby (build environment for `gem build`)
+        # Provides the `gem` CLI used by the publishCmd (`gem build` + `gem push`).
+        # No bundler-cache: release neither runs specs nor needs the dev
+        # dependency tree — only a Ruby toolchain to build and push the gem.
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+
+      - name: Set up Node LTS (for semantic-release)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+
+      - name: Enable corepack (Yarn from the lockfile dialect)
+        # Activates the corepack yarn shim so `yarn install` runs Yarn Berry
+        # (the committed yarn.lock is __metadata version 10). Matches the PHP/
+        # Android SDK release flow. Runs AFTER setup-node so corepack uses the
+        # pinned Node toolchain.
+        run: corepack enable
+
+      - name: Install Node release tooling
+        # The dev-only semantic-release toolchain from package.json, resolved
+        # against the committed yarn.lock. --immutable errors if the lockfile
+        # drifts from package.json (matches the PHP/Android SDK pattern). The
+        # gem itself keeps ZERO runtime deps and the gemspec excludes these node
+        # artifacts — they exist only on the CI runner during release.
+        run: yarn install --immutable
+
+      - name: Configure RubyGems OIDC Trusted Publishing credentials
+        # Exchanges the workflow's GitHub OIDC token for a short-lived RubyGems
+        # API credential and writes it where `gem push` reads it. MUST run BEFORE
+        # semantic-release, because the publishCmd (`gem push`) executes inside
+        # semantic-release's publish phase. No long-lived RUBYGEMS_API_KEY secret
+        # exists anywhere (FR67 / NFR8).
+        #
+        # Trusted-publisher registration (gem `convert_sdk` ↔ repo
+        # `convertcom/ruby-sdk` ↔ workflow `release.yml`) is a one-time HUMAN
+        # maintainer action on rubygems.org — see the story's human checklist.
+        #
+        # Pinned at @v2.0.0 — the current stable major (verified against
+        # https://github.com/rubygems/configure-rubygems-credentials/releases).
+        uses: rubygems/configure-rubygems-credentials@v2.0.0
+
+      - name: Run semantic-release
+        # semantic-release orchestrates everything from here (plugin order in
+        # release.config.mjs):
+        #   1. commit-analyzer         → compute next version from commits
+        #   2. release-notes-generator → render notes
+        #   3. exec prepareCmd         → write version into lib/convert_sdk/version.rb
+        #                                (uncommitted working-tree edit)
+        #   4. exec publishCmd         → `gem build` + `gem push` to RubyGems.org
+        #   5. github                  → push vX.Y.Z tag + create GitHub Release
+        #
+        # PUBLISH-BEFORE-RELEASE (AC-3): step 4 runs before step 5. If `gem push`
+        # fails, semantic-release aborts BEFORE the GitHub Release/tag is
+        # finalized — there is never a Release without a gem on RubyGems.org.
+        # No commit is pushed to `main`.
+        run: yarn release
+        env:
+          # Used by semantic-release core to push the tag and by
+          # @semantic-release/github to create the Release.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

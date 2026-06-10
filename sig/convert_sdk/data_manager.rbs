@@ -1,0 +1,170 @@
+module ConvertSdk
+  # The in-memory home of the deep-frozen project config snapshot and the only
+  # surface through which config is read.
+  class DataManager
+    @log_manager: LogManager
+    @data_store_manager: DataStoreManager?
+    @config_key: String?
+    @ttl: Numeric?
+    @timer_off: bool
+    @clock: ^() -> Float
+    @config: Hash[String, untyped]?
+    @fetched_at: Float?
+    @config_mutex: Thread::Mutex
+    @fetch_mutex: Thread::Mutex
+    @bucketing_manager: BucketingManager?
+    @rule_manager: RuleManager?
+    @account_resolver: ^() -> untyped
+    @project_resolver: ^() -> untyped
+
+    attr_accessor refetch: (^() -> untyped)?
+
+    def initialize: (
+      log_manager: LogManager,
+      ?data_store_manager: DataStoreManager?,
+      ?config_key: String?,
+      ?ttl: Numeric?,
+      ?clock: ^() -> Float,
+      ?refetch: (^() -> untyped)?,
+      ?bucketing_manager: BucketingManager?,
+      ?rule_manager: RuleManager?,
+      ?account_resolver: (^() -> untyped)?,
+      ?project_resolver: (^() -> untyped)?
+    ) -> void
+
+    def install_config: (untyped hash) -> (Symbol | bool)
+
+    def install_from_cache_if_fresh: () -> Symbol?
+
+    def ensure_fresh_config!: () -> void
+
+    def config_stale?: () -> bool
+
+    def config_available?: () -> bool
+
+    def account_id: () -> String?
+
+    def project_id: () -> String?
+
+    def project: () -> Hash[String, untyped]?
+
+    def experiences: () -> Array[untyped]
+
+    def features: () -> Array[untyped]
+
+    def goals: () -> Array[untyped]
+
+    def audiences: () -> Array[untyped]
+
+    def segments: () -> Array[untyped]
+
+    def locations: () -> Array[untyped]
+
+    def experience_by_key: (String key) -> Hash[String, untyped]?
+
+    def feature_by_key: (String key) -> Hash[String, untyped]?
+
+    def goal_by_key: (String key) -> Hash[String, untyped]?
+
+    def archived_experiences: () -> Array[untyped]
+
+    def get_bucketing: (
+      String visitor_id,
+      String experience_key,
+      ?Hash[Symbol, untyped] attributes
+    ) -> (BucketedVariation | Sentinel)
+
+    def convert: (
+      String visitor_id,
+      String goal_key,
+      ?goal_data: Hash[untyped, untyped]?,
+      ?force_multiple_transactions: bool
+    ) -> Hash[String, untyped]?
+
+    private
+
+    def dedup_and_mark: (String visitor_id, String goal_id, bool force) -> bool
+
+    def resolve_dedup: (String goal_id, untyped already, bool force) -> [ bool, Hash[String, untyped] ]
+
+    def goal_marked?: (Hash[String, untyped] current, String goal_id) -> untyped
+
+    def build_conversion_data: (String visitor_id, String goal_id, Hash[untyped, untyped]? goal_data) -> Hash[String, untyped]
+
+    def goal_data_pairs: (Hash[untyped, untyped]? goal_data) -> Array[Hash[String, untyped]]
+
+    def stored_bucketing_map: (String visitor_id) -> Hash[String, untyped]
+
+    def match_rules_by_field: (String visitor_id, String experience_key, Hash[Symbol, untyped] attributes) -> (Hash[String, untyped] | Sentinel | nil)
+
+    def eligible_experience: (String experience_key, untyped environment) -> Hash[String, untyped]?
+
+    def eligible_for_variation: (Hash[String, untyped] experience, untyped gates_passed) -> Hash[String, untyped]?
+
+    def reason_miss: (Hash[String, untyped] experience, String step) -> nil
+
+    def retrieve_bucketing: (String visitor_id, Hash[String, untyped] experience, Hash[Symbol, untyped] attributes) -> (BucketedVariation | Sentinel)
+
+    def sticky_variation: (String visitor_id, Hash[String, untyped] experience) -> BucketedVariation?
+
+    def bucket_fresh: (String visitor_id, Hash[String, untyped] experience, Hash[Symbol, untyped] attributes) -> (BucketedVariation | Sentinel)
+
+    def archived?: (Hash[String, untyped] experience) -> bool
+
+    def environment_match?: (Hash[String, untyped] experience, untyped environment) -> bool
+
+    def visitor_bucketed?: (String visitor_id, Hash[String, untyped] experience) -> bool
+
+    def stored_variation_id: (String visitor_id, Hash[String, untyped] experience) -> String?
+
+    def match_locations: (untyped location_properties, Hash[String, untyped] experience) -> (bool | Sentinel)
+
+    def match_location_list: (untyped location_properties, untyped location_ids) -> bool
+
+    def match_site_area: (untyped location_properties, untyped site_area) -> (bool | Sentinel)
+
+    def match_audiences: (Hash[String, untyped] experience, untyped visitor_properties, bool is_bucketed) -> (bool | Sentinel)
+
+    def audiences_to_check: (Hash[String, untyped] experience, bool is_bucketed) -> Array[Hash[String, untyped]]
+
+    def matched_audiences: (Array[Hash[String, untyped]] to_check, untyped visitor_properties) -> (Array[Hash[String, untyped]] | Sentinel)
+
+    def audiences_verdict?: (Hash[String, untyped] experience, Array[Hash[String, untyped]] matched, Array[Hash[String, untyped]] to_check) -> bool
+
+    def custom_segments_matched?: (Hash[String, untyped] experience, String visitor_id) -> bool
+
+    def custom_segments: (String visitor_id) -> Array[untyped]
+
+    def all_match_required?: (Hash[String, untyped] experience) -> bool
+
+    def build_buckets: (Hash[String, untyped] experience) -> Hash[String, (Integer | Float)]
+
+    def variation_list: (Hash[String, untyped] experience) -> Array[untyped]
+
+    def bucketable_variation?: (untyped variation) -> bool
+
+    def persist_bucketing: (String visitor_id, String experience_id, untyped variation_id, Hash[Symbol, untyped] attributes) -> void
+
+    def visitor_store_data: (String visitor_id) -> Hash[String, untyped]
+
+    def retrieve_variation: (Hash[String, untyped] experience, untyped variation_id) -> Hash[String, untyped]?
+
+    def build_bucketed_variation: (Hash[String, untyped] experience, Hash[String, untyped] variation, untyped bucketing_allocation) -> BucketedVariation
+
+    def items_by_ids: (untyped ids, Array[untyped] list) -> Array[Hash[String, untyped]]
+
+    def cache_config: (Hash[String, untyped] frozen) -> void
+
+    def cached_entry: () -> Hash[String, untyped]?
+
+    def effective_ttl: () -> Numeric
+
+    def data: () -> Hash[String, untyped]?
+
+    def collection: (String name) -> Array[untyped]
+
+    def find_by_key: (Array[untyped] list, String key) -> Hash[String, untyped]?
+
+    def deep_freeze: (untyped node) -> untyped
+  end
+end

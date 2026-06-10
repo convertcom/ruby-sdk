@@ -1,0 +1,218 @@
+# frozen_string_literal: true
+
+require_relative "convert_sdk/version"
+require_relative "convert_sdk/murmur_hash3"
+require_relative "convert_sdk/sentinel"
+require_relative "convert_sdk/enums/rule_error"
+require_relative "convert_sdk/enums/bucketing_error"
+require_relative "convert_sdk/enums/feature_status"
+require_relative "convert_sdk/enums/log_level"
+require_relative "convert_sdk/enums/system_events"
+require_relative "convert_sdk/enums/goal_data_key"
+require_relative "convert_sdk/bucketed_variation"
+require_relative "convert_sdk/bucketed_feature"
+require_relative "convert_sdk/redactor"
+require_relative "convert_sdk/log_manager"
+require_relative "convert_sdk/config_validator"
+require_relative "convert_sdk/config"
+require_relative "convert_sdk/bucketing_manager"
+require_relative "convert_sdk/comparisons"
+require_relative "convert_sdk/rule_manager"
+require_relative "convert_sdk/http_client"
+require_relative "convert_sdk/stores/memory_store"
+require_relative "convert_sdk/stores/redis_store"
+require_relative "convert_sdk/data_store_manager"
+require_relative "convert_sdk/event_manager"
+require_relative "convert_sdk/fork_guard"
+require_relative "convert_sdk/background_timer"
+require_relative "convert_sdk/data_manager"
+require_relative "convert_sdk/visitors_queue"
+require_relative "convert_sdk/api_manager"
+require_relative "convert_sdk/experience_manager"
+require_relative "convert_sdk/feature_manager"
+require_relative "convert_sdk/segments_manager"
+require_relative "convert_sdk/context"
+require_relative "convert_sdk/client"
+
+# Install the SDK's only global mutation — the Process._fork prepend — at load
+# (it must exist before any fork; installing it is cheap and thread-free, so it
+# respects the NFR4 zero-threads-until-use rule, which concerns THREADS, not the
+# hook). A no-op on JRuby by construction.
+ConvertSdk::ForkGuard.install!
+
+# The Convert Experiences full-stack SDK for Ruby.
+#
+# {ConvertSdk.create} is THE public entry point (frozen API name): it builds the
+# validated {Config}, wires the managers, and returns a ready-to-use {Client}.
+module ConvertSdk
+  # The default config-cache TTL in seconds, used by the timer-off (Lambda/CLI)
+  # decision-time staleness check when +data_refresh_interval+ is +nil+
+  # (timer-off ≠ TTL-off). 300s converges on the same cadence the background
+  # timer uses, on demand. A Ruby-SDK design constant (PHP on-demand TTL
+  # semantics) — the JS SDK has no timer-off TTL concept. See Story 2.7.
+  DEFAULT_CONFIG_TTL = 300
+
+  # The SDK's base error type. Note the SDK has NO custom exception hierarchy for
+  # runtime/infra failures (Decision 3 — it degrades gracefully with cached
+  # config / sentinels); misconfiguration surfaces as a plain +ArgumentError+
+  # from {Config}. This type exists only as a namespace anchor.
+  class Error < StandardError; end
+
+  # Whether {Client} registers its PID-guarded +at_exit+ flush handler at
+  # construction (Story 4.4 AC#5). Always +true+ in production. The TEST HARNESS
+  # alone flips this off (a +spec/support+ hook) so unit specs that build clients
+  # do NOT register live +at_exit+ handlers — which would fire +flush+ during
+  # RSpec suite teardown. The handler BODY is unit-tested directly via
+  # +Client#run_at_exit_flush+; the live-registration path is proven end-to-end
+  # in a SUBPROCESS in spec/integration/fork_safety_spec.rb.
+  # @return [Boolean]
+  def self.at_exit_registration_enabled?
+    @at_exit_registration_enabled = true unless defined?(@at_exit_registration_enabled)
+    @at_exit_registration_enabled
+  end
+
+  # Set the {at_exit_registration_enabled?} flag (test harness only).
+  # @param value [Boolean]
+  # @return [Boolean]
+  def self.at_exit_registration_enabled=(value)
+    @at_exit_registration_enabled = value
+  end
+
+  # Build an SDK client from an SDK key (live config fetch) or a pre-fetched
+  # +data:+ object (direct data mode). THE public entry point.
+  #
+  # Wiring order: a {LogManager} is built first, then {Config} (which registers
+  # any +sdk_key+ / +sdk_key_secret+ with the manager's Redactor before any log
+  # line can carry them and raises +ArgumentError+ on misconfiguration — the
+  # SDK's only raising surface), then the {HttpClient}, {DataStoreManager},
+  # {EventManager}, and {DataManager} ports, then the {Client} (which fetches /
+  # installs config and fires +ready+). No background threads are started here
+  # (NFR4 — lazy start; the refresh / flush timers are wired by their own
+  # stories).
+  #
+  # @param sdk_key [String, nil] the account/project SDK key (fetch mode).
+  # @param data [Hash, nil] a pre-fetched config object (direct data mode); when
+  #   supplied, no fetch occurs.
+  # @param store [Object, nil] an optional duck-typed data store (get/set);
+  #   defaults to an in-memory store.
+  # @param clock [#call, nil] an optional monotonic time source (seconds) for
+  #   the config-cache TTL math (Story 2.7); defaults to the SDK's monotonic
+  #   clock. Injectable so tests control staleness without real waits. NOT a
+  #   {Config} option — extracted here before validation.
+  # @param sink [Object, nil] an optional initial log sink (anything responding
+  #   to debug/info/warn/error). Forwarded to the internally-built {LogManager}
+  #   so the FULL lifecycle — including the construction-time config fetch
+  #   (+HttpClient#request+ debug line, which carries the sdk_key in the config
+  #   URL) — is observable through the public entry point. Without this seam a
+  #   host could only attach a sink AFTER {create}, missing every init-time line
+  #   (and therefore the init-time redaction proof). NOT a {Config} option —
+  #   extracted here before validation (like +clock+). Invalid sinks are rejected
+  #   by {LogManager#add_sink}, not raised.
+  # @param options [Hash{Symbol=>Object}] any other {Config::DEFAULTS} option
+  #   (+sdk_key_secret+, +environment+, +log_level+, timeouts, …).
+  # @raise [ArgumentError] on misconfiguration (missing sdk_key+data, bad types,
+  #   unknown option) — the only exception {create} lets escape.
+  # @return [Client] the wired SDK client.
+  def self.create(sdk_key: nil, data: nil, store: nil, clock: nil, sink: nil, **options)
+    config_options = options.merge(sdk_key: sdk_key, data: data)
+    log_manager = LogManager.new(
+      level: options.fetch(:log_level, Config::DEFAULTS[:log_level]), sink: sink
+    )
+    # Wire the ForkGuard re-arm logger (Story 2.7) so fork-detection debug lines
+    # flow through the redacting LogManager. nil-safe before wiring.
+    ForkGuard.logger = log_manager
+    config = Config.new(log_manager: log_manager, **config_options)
+
+    Client.new(config: config, log_manager: log_manager, **build_managers(config, log_manager, store, clock))
+  end
+
+  # Build the full collaborator graph wired around a validated {Config}: the HTTP
+  # port, the store/event ports, the Story 2.9/2.10 decision engines, the
+  # {DataManager} (decision flow), the {ApiManager} (delivery), and the per-context
+  # decisioning surfaces (Story 2.11 / 3.1 / 3.2). All thread-free (NFR4 — no
+  # timers start here). Returned as the keyword map {Client#initialize} consumes.
+  # @api private
+  def self.build_managers(config, log_manager, store, clock)
+    http_client = HttpClient.new(
+      log_manager: log_manager, open_timeout: config.open_timeout, read_timeout: config.read_timeout
+    )
+    data_store_manager = DataStoreManager.new(log_manager: log_manager, store: store)
+    event_manager = EventManager.new(log_manager: log_manager)
+    # The pure-math decision engines (Story 2.9 / 2.10) — thread-free, config-bound.
+    bucketing_manager = BucketingManager.new(config: config, log_manager: log_manager)
+    rule_manager = RuleManager.new(config: config, comparisons: Comparisons, log_manager: log_manager)
+    # The DataManager owns the ordered decision flow; it needs the two engines to
+    # bucket and walk rules (without them it is config-read-only — the 2.5/2.7 use).
+    data_manager = build_data_manager(
+      config, log_manager, data_store_manager, clock, bucketing_manager, rule_manager
+    )
+    api_manager = build_api_manager(config, log_manager, http_client, event_manager, data_manager)
+    decisioning = build_decisioning_managers(log_manager, data_store_manager, data_manager, rule_manager)
+    {
+      http_client: http_client, data_store_manager: data_store_manager,
+      event_manager: event_manager, data_manager: data_manager, api_manager: api_manager,
+      experience_manager: decisioning[:experience_manager],
+      feature_manager: decisioning[:feature_manager],
+      segments_manager: decisioning[:segments_manager]
+    }
+  end
+  private_class_method :build_managers
+
+  # Build the per-context decisioning surfaces (Story 2.11 / 3.1 / 3.2) as a
+  # thread-free trio (NFR4 — no timers start here). SegmentsManager reuses the
+  # rule engine and resolves the store-key halves from the DataManager readers
+  # (its account/project resolvers).
+  # @api private
+  def self.build_decisioning_managers(log_manager, data_store_manager, data_manager, rule_manager)
+    {
+      experience_manager: ExperienceManager.new(data_manager: data_manager, log_manager: log_manager),
+      feature_manager: FeatureManager.new(data_manager: data_manager, log_manager: log_manager),
+      segments_manager: SegmentsManager.new(
+        data_manager: data_manager, data_store_manager: data_store_manager,
+        account_resolver: -> { data_manager.account_id }, project_resolver: -> { data_manager.project_id },
+        rule_manager: rule_manager, log_manager: log_manager
+      )
+    }
+  end
+  private_class_method :build_decisioning_managers
+
+  # Build the outbound delivery surface (Story 4.1): the {ApiManager} owns the
+  # per-visitor event queue and the wire-payload builder. No thread is started
+  # here (NFR4 — the background flush timer lands in Story 4.2); construction is
+  # thread-free.
+  # @api private
+  def self.build_api_manager(config, log_manager, http_client, event_manager, data_manager)
+    ApiManager.new(
+      config: config, data_manager: data_manager, http_client: http_client,
+      event_manager: event_manager, log_manager: log_manager
+    )
+  end
+  private_class_method :build_api_manager
+
+  # Build the {DataManager} wired with the Story 2.7 config-cache surface AND the
+  # Story 2.9/2.10 decision engines: the cache lives under
+  # +convert_sdk.config.{sdkKey}+ (the DataManager writes through on every install
+  # and runs the timer-off TTL check against it). A nil sdk_key (direct-data mode)
+  # leaves the cache key nil, so no cache write happens. The +clock+ (monotonic
+  # TTL source) is injected only when supplied. The +bucketing_manager+ /
+  # +rule_manager+ make the ordered decision flow operative (without them the
+  # DataManager is config-read-only). The account/project resolvers are left to
+  # the DataManager's own readers (its constructor defaults to +#account_id+ /
+  # +#project_id+) — the live config IS the source of those store-key halves here.
+  # @api private
+  def self.build_data_manager(config, log_manager, data_store_manager, clock,
+                              bucketing_manager, rule_manager)
+    config_key = config.sdk_key.nil? ? nil : data_store_manager.config_key(config.sdk_key)
+    clock_option = clock.nil? ? {} : { clock: clock } #: Hash[Symbol, ^() -> Float]
+    DataManager.new(
+      log_manager: log_manager,
+      data_store_manager: data_store_manager,
+      config_key: config_key,
+      ttl: config.data_refresh_interval,
+      bucketing_manager: bucketing_manager,
+      rule_manager: rule_manager,
+      **clock_option
+    )
+  end
+  private_class_method :build_data_manager
+end

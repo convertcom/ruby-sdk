@@ -1,0 +1,88 @@
+module ConvertSdk
+  # The per-visitor public surface — the object an integrator holds for the
+  # lifetime of one request/job. Creation, attribute normalisation, property
+  # updates, and config/visitor-data lookups (Story 2.8); decisioning methods
+  # attach in later stories.
+  class Context
+    @visitor_id: String
+    @data_manager: DataManager
+    @data_store_manager: DataStoreManager
+    @event_manager: EventManager
+    @log_manager: LogManager
+    @config: Config
+    @attributes: Hash[String, untyped]
+    @experience_manager: ExperienceManager?
+    @feature_manager: FeatureManager?
+    @segments_manager: SegmentsManager?
+    @api_manager: ApiManager?
+
+    attr_reader visitor_id: String
+    attr_reader attributes: Hash[String, untyped]
+
+    def initialize: (
+      visitor_id: String,
+      data_manager: DataManager,
+      data_store_manager: DataStoreManager,
+      event_manager: EventManager,
+      log_manager: LogManager,
+      config: Config,
+      ?attributes: Hash[untyped, untyped]?,
+      ?experience_manager: ExperienceManager?,
+      ?feature_manager: FeatureManager?,
+      ?segments_manager: SegmentsManager?,
+      ?api_manager: ApiManager?
+    ) -> void
+
+    def update_visitor_properties: (Hash[untyped, untyped]? properties) -> self
+
+    def get_visitor_data: () -> Hash[String, untyped]
+
+    def get_config_entity: (String key, (String | Symbol) entity_type) -> Hash[String, untyped]?
+
+    def run_experience: (String key, ?Hash[untyped, untyped]? attributes) -> (BucketedVariation | Sentinel)
+
+    def run_experiences: (?Hash[untyped, untyped]? attributes) -> Array[BucketedVariation]
+
+    def run_feature: (String key, ?Hash[untyped, untyped]? attributes) -> (BucketedFeature | Array[BucketedFeature])
+
+    def run_features: (?Hash[untyped, untyped]? attributes) -> Array[BucketedFeature]
+
+    def set_default_segments: (Hash[untyped, untyped]? segments) -> self
+
+    def run_custom_segments: (Array[String] segment_keys, ?Hash[untyped, untyped]? attributes) -> Sentinel?
+
+    def track_conversion: (
+      String goal_key,
+      ?goal_data: Hash[untyped, untyped]?,
+      ?force_multiple_transactions: bool
+    ) -> self
+
+    private
+
+    def fire_conversion: (String goal_key, Hash[String, untyped] data) -> void
+
+    def enqueue_conversion_event: (Hash[String, untyped] data) -> void
+
+    def visitor_properties: (Hash[untyped, untyped]? attributes) -> Hash[String, untyped]
+
+    def disabled_feature: (String key) -> BucketedFeature
+
+    def decision_attributes: (Hash[untyped, untyped]? per_call) -> Hash[Symbol, untyped]
+
+    def fire_bucketing: (untyped experience_key, BucketedVariation variation, ?track: bool) -> void
+
+    def suppress_bucketing_enqueue?: (bool track) -> bool
+
+    def tracking_enabled_for_call?: (Hash[untyped, untyped]? attributes) -> bool
+
+    def enqueue_bucketing_event: (BucketedVariation variation) -> void
+
+    def account_key: () -> String
+
+    def project_key: () -> String
+
+    def empty_store_data: () -> Hash[String, untyped]
+
+    def deep_stringify: (untyped node) -> untyped
+  end
+end

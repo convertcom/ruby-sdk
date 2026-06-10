@@ -1,0 +1,72 @@
+{
+  "_provenance": "Ruby-SDK extension vectors for Story 2.10. These cases are sourced from JS SDK semantics (javascript-sdk/packages/utils/src/comparisons.ts:154-172 and packages/rules/src/rule-manager.ts:323-333) and are ADDED here, NEVER edited into the vendored rule-test-vectors.json. They exist because the PHP CrossSdk vectors lack the existence operators entirely (PHP Comparisons.php ships zero exists/not_exists handling — a disk-verified gap) and because the JS undefined (key absent) vs null (present null value) distinction has no representation in the PHP-derived goldens. Ruby models key-absence with the Comparisons::UNDEFINED marker; these vectors prove the exists/not_exists/doesNotExist x present/absent/nil matrix matches JS.",
+
+  "comparison_operators": [
+    {
+      "category": "exists",
+      "method": "exists",
+      "cases": [
+        { "value": "US", "testAgainst": null, "negation": false, "expected": true, "note": "present non-empty exists" },
+        { "value": "", "testAgainst": null, "negation": false, "expected": false, "note": "empty string does not exist (ts:159)" },
+        { "value": null, "testAgainst": null, "negation": false, "expected": false, "note": "nil (JS null) does not exist" },
+        { "value": "US", "testAgainst": null, "negation": true, "expected": false, "note": "negated exists" },
+        { "value": "", "testAgainst": null, "negation": true, "expected": true, "note": "negated empty exists" }
+      ]
+    },
+    {
+      "category": "not_exists",
+      "method": "not_exists",
+      "cases": [
+        { "value": "US", "testAgainst": null, "negation": false, "expected": false, "note": "present -> not_exists false" },
+        { "value": "", "testAgainst": null, "negation": false, "expected": true, "note": "empty -> not_exists true" },
+        { "value": null, "testAgainst": null, "negation": false, "expected": true, "note": "nil -> not_exists true" }
+      ]
+    },
+    {
+      "category": "doesNotExist",
+      "method": "doesNotExist",
+      "cases": [
+        { "value": "US", "testAgainst": null, "negation": false, "expected": false, "note": "present -> doesNotExist false (alias of not_exists)" },
+        { "value": null, "testAgainst": null, "negation": false, "expected": true, "note": "nil -> doesNotExist true" }
+      ]
+    }
+  ],
+
+  "rule_evaluation": [
+    {
+      "category": "exists_present_key",
+      "description": "exists on a present non-empty key matches",
+      "data": { "country": "US" },
+      "ruleSet": { "OR": [{ "AND": [{ "OR_WHEN": [{ "rule_type": "generic_key_value", "matching": { "match_type": "exists", "negated": false }, "key": "country" }] }] }] },
+      "expected": true
+    },
+    {
+      "category": "exists_absent_key_undefined_fallback",
+      "description": "exists on an ABSENT key is false (undefined-fallback, rule-manager.ts:323-333)",
+      "data": { "browser": "chrome" },
+      "ruleSet": { "OR": [{ "AND": [{ "OR_WHEN": [{ "rule_type": "generic_key_value", "matching": { "match_type": "exists", "negated": false }, "key": "country" }] }] }] },
+      "expected": false
+    },
+    {
+      "category": "exists_present_nil_value",
+      "description": "exists on a key present with a nil (JS null) value is false",
+      "data": { "country": null },
+      "ruleSet": { "OR": [{ "AND": [{ "OR_WHEN": [{ "rule_type": "generic_key_value", "matching": { "match_type": "exists", "negated": false }, "key": "country" }] }] }] },
+      "expected": false
+    },
+    {
+      "category": "does_not_exist_absent_key_undefined_fallback",
+      "description": "doesNotExist on an ABSENT key is true (undefined-fallback)",
+      "data": { "browser": "chrome" },
+      "ruleSet": { "OR": [{ "AND": [{ "OR_WHEN": [{ "rule_type": "generic_key_value", "matching": { "match_type": "doesNotExist", "negated": false }, "key": "country" }] }] }] },
+      "expected": true
+    },
+    {
+      "category": "does_not_exist_present_key",
+      "description": "doesNotExist on a present non-empty key is false",
+      "data": { "country": "US" },
+      "ruleSet": { "OR": [{ "AND": [{ "OR_WHEN": [{ "rule_type": "generic_key_value", "matching": { "match_type": "doesNotExist", "negated": false }, "key": "country" }] }] }] },
+      "expected": false
+    }
+  ]
+}

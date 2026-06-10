@@ -1,0 +1,154 @@
+# AUTO-GENERATED FROM backend apiDoc/serving — DO NOT EDIT. Regenerate via the serving workflow.
+
+# RBS type aliases for the Convert serving config response.
+# Generated from dist/types.gen.ts (already discriminator-corrected by fix-discriminants.js).
+# Entity field sets are REFLECTED from the TypeScript AST (qs-03 D1 / F14) — never
+# hand-listed. A backend field rename/removal changes the reflected record, which
+# the ruby-sdk contract probe (steep/config_contract_probe.rb) then catches via
+# steep check. Discriminator unions (goal_type, ga_integration_type,
+# feature_variable_type) are sourced from the corrected TS and preserved per-variant
+# (ConfigGoal admits all 10 type values — AC4).
+#
+# All record fields are nullable (?) so real config carrying extra/undeclared fields
+# never false-positives (AC2); the probe binds SYNTHETIC values and accesses only
+# the spec-declared fields the SDK depends on.
+
+module ConvertSdk
+  # ── Primitive aliases ──────────────────────────────────────────────────────
+
+  # A nested rule structure (OR of AND blocks of OR_WHEN rule elements).
+  # Typed as untyped to avoid false positives from arbitrarily deep nesting.
+  type rule_object = untyped
+
+  # ── Discriminator unions (reflected from dist/types.gen.ts) ─────────────────
+
+  # All 10 ConfigGoal discriminator-mapping values (AC4) — inherited
+  # verbatim from dist/types.gen.ts via fix-discriminants.js, NOT the 5-value
+  # GoalTypes enum subset.
+  type goal_type = "dom_interaction" | "scroll_percentage" | "revenue" | "advanced" | "visits_page" | "code_trigger" | "ga_import" | "submits_form" | "clicks_link" | "clicks_element"
+
+  type feature_variable_type = "boolean" | "float" | "json" | "integer" | "string"
+
+  type ga_integration_type = "ga3" | "ga4"
+
+  # ── Reflected config entities ──────────────────────────────────────────────
+
+  type config_response_data = {
+    "account_id" => String?,
+    "project" => config_project?,
+    "goals" => Array[config_goal]?,
+    "locations" => Array[config_location]?,
+    "audiences" => Array[config_audience]?,
+    "segments" => Array[config_segment]?,
+    "experiences" => Array[config_experience]?,
+    "archived_experiences" => Array[String]?,
+    "features" => Array[config_feature]?,
+    "is_debug" => bool?
+  }
+
+  type config_project = {
+    "id" => String?,
+    "name" => String?,
+    "type" => String?,
+    "utc_offset" => untyped?,
+    "custom_domain" => { "domain" => String?, "version" => String? }?,
+    "domains" => Array[{ "tld" => String?, "hosts" => untyped? }]?,
+    "global_javascript" => String?,
+    "settings" => { "allow_crossdomain_tracking" => bool?, "data_anonymization" => bool?, "do_not_track" => String?, "global_privacy_control" => String?, "do_not_track_referral" => bool?, "integrations" => { "google_analytics" => untyped?, "visitor_insights" => { "tracking_id" => untyped? }?, "kissmetrics" => { "enabled" => bool? }? }?, "min_order_value" => Numeric?, "max_order_value" => Numeric?, "outliers" => { "order_value" => untyped?, "products_ordered_count" => untyped? }?, "placeholders" => Array[String]?, "global_javascript_placeholders" => Array[String]?, "include_jquery" => bool?, "include_jquery_v1" => bool?, "disable_spa_functionality" => bool?, "version" => String?, "tracking_script" => untyped? }?
+  }
+
+  type config_experience = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "locations" => Array[String]?,
+    "site_area" => rule_object?,
+    "audiences" => Array[String]?,
+    "goals" => Array[String]?,
+    "multipage_pages" => Array[untyped]?,
+    "status" => String?,
+    "global_js" => String?,
+    "global_css" => String?,
+    "type" => String?,
+    "version" => Numeric?,
+    "variations" => Array[experience_variation]?,
+    "integrations" => Array[untyped]?,
+    "environments" => Array[String]?,
+    "environment" => String?,
+    "settings" => { "min_order_value" => Numeric?, "max_order_value" => Numeric?, "outliers" => { "order_value" => untyped?, "products_ordered_count" => untyped? }?, "placeholders" => Array[String]?, "split_url_settings" => { "split_regex_support" => bool? }?, "matching_options" => { "audiences" => String?, "locations" => String? }? }?
+  }
+
+  type experience_variation = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "traffic_allocation" => Numeric?,
+    "status" => String?,
+    "changes" => Array[feature_change_data]?
+  }
+
+  type feature_change_data = {
+    "id" => Numeric?,
+    "type" => String?,
+    "data" => { "feature_id" => Numeric?, "variables_data" => untyped? }?
+  }
+
+  type config_goal = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "type" => goal_type?,
+    "rules" => rule_object?
+  }
+
+  type config_audience = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "type" => String?,
+    "rules" => rule_object?
+  }
+
+  type config_location = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "trigger" => untyped?,
+    "rules" => rule_object?
+  }
+
+  type config_segment = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "rules" => rule_object?
+  }
+
+  type config_feature = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "variables" => Array[feature_variable]?
+  }
+
+  type feature_variable = {
+    "key" => String?,
+    "type" => feature_variable_type?
+  }
+
+  type experience_integration_ga_serving = {
+    "enabled" => bool?,
+    "provider" => String?,
+    "type" => ga_integration_type?,
+    "measurementId" => String?
+  }
+
+  type ga_settings = {
+    "enabled" => bool?,
+    "auto_revenue_tracking" => bool?,
+    "track_first_exposure_only" => bool?,
+    "type" => ga_integration_type?,
+    "measurementId" => String?,
+    "no_wait_pageview" => bool?
+  }
+end

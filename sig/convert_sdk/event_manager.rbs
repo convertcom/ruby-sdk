@@ -1,0 +1,19 @@
+module ConvertSdk
+  # Synchronous, thread-safe pub/sub engine for SDK lifecycle events.
+  class EventManager
+    @log_manager: LogManager
+    @listeners: Hash[String, Array[Proc]]
+    @deferred: Hash[String, { payload: untyped, err: untyped }]
+    @listeners_mutex: Thread::Mutex
+
+    def initialize: (log_manager: LogManager) -> void
+
+    def on: (untyped event) ?{ (untyped payload, untyped err) -> void } -> self
+
+    def fire: (untyped event, ?untyped payload, ?untyped err, ?deferred: bool) -> void
+
+    private
+
+    def invoke: (String event, Proc listener, untyped payload, untyped err) -> void
+  end
+end

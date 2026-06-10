@@ -1,0 +1,33 @@
+# Docker Compose V2 (invoke as `docker compose up`, NOT `docker-compose`).
+#
+# Interactive mode: `docker compose up` boots the demo wired to the LIVE Convert
+# staging project — set CONVERT_SDK_KEY / CONVERT_SDK_KEY_SECRET (and the entity
+# keys) in your shell or a .env file (see .env.example). This is for humans
+# clicking around the demo endpoints.
+#
+# The OFFLINE CI fork smoke does NOT use this compose file — it boots Puma
+# directly against a local stub server (see script/fork_smoke.rb) so it stays
+# deterministic and network-free.
+services:
+  demo:
+    build:
+      # Build context is the REPO ROOT so the `path: "../.."` gem dependency
+      # resolves inside the image. The Dockerfile lives under demo/rails/.
+      context: ../..
+      dockerfile: demo/rails/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      # The PUBLIC SDK key for the shared staging project (10035569/10034190).
+      # This key takes NO secret — supply via your shell or a .env file.
+      CONVERT_SDK_KEY: "${CONVERT_SDK_KEY:-}"
+      # Entity keys for the demo flows (see .env.example for what they map to in
+      # the staging project — the same entities the JS/PHP demos exercise).
+      CONVERT_PRICING_EXPERIENCE_KEY: "${CONVERT_PRICING_EXPERIENCE_KEY:-}"
+      CONVERT_FEATURE_KEY: "${CONVERT_FEATURE_KEY:-}"
+      CONVERT_SEGMENT_KEY: "${CONVERT_SEGMENT_KEY:-}"
+      CONVERT_GOAL_KEY: "${CONVERT_GOAL_KEY:-}"
+      # Allow the container's host header (Rails host-authorization) for local use.
+      CONVERT_DEMO_DISABLE_HOST_CHECK: "1"
+      RAILS_ENV: "production"
+      RAILS_LOG_LEVEL: "info"
