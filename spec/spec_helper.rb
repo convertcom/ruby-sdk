@@ -103,6 +103,14 @@ RSpec.configure do |config|
   # Disable RSpec exposing methods globally on `Module` and `main`
   config.disable_monkey_patching!
 
+  # Story 5.1 — the live-platform staging suite (spec/staging/**, tagged
+  # :staging) is EXCLUDED from the default run. It hits the real platform over
+  # the network and needs the CONVERT_SDK_KEY repo secrets, so it must never run
+  # in PR CI (qa.yml) — only the dedicated scheduled/dispatch staging.yml opts in
+  # with `rspec --tag staging`. This is the ONLY staging-related change to this
+  # single-source quality-rails file; the SimpleCov config above is untouched.
+  config.filter_run_excluding staging: true
+
   config.expect_with :rspec do |c|
     c.syntax = :expect
   end
@@ -111,4 +119,14 @@ RSpec.configure do |config|
   # port and its downstream consumers (Epics 2/4). Reset capture per example.
   config.include HttpStubs
   config.before { reset_http_capture }
+
+  # Test-isolation reap: STOP every registered BackgroundTimer at each example
+  # boundary so no flush/refresh timer thread can survive into the next example.
+  # A leaked timer thread (e.g. the short-interval real-loop examples) firing a
+  # real POST/GET after its example ends would be blocked by WebMock and land,
+  # intermittently under JRuby's scheduling, inside a LATER example's zero-HTTP
+  # assertion (e.g. tracking_control_spec's `not_to have_been_made`). Reaping
+  # here closes that race deterministically. `#stop` is idempotent, so this is a
+  # cheap no-op for the vast majority of examples that start no timer.
+  config.after { ConvertSdk::ForkGuard.stop_all_timers! }
 end

@@ -382,9 +382,14 @@ RSpec.describe ConvertSdk::ApiManager do
 
       manager.enqueue("v1", bucketing_event(experience_id: "e1", variation_id: "var1"))
 
-      # Bounded wait for one real tick on the timer thread (no Timeout, no sleep loop).
+      # Bounded wait for one real tick on the timer thread (no Timeout, no sleep
+      # loop). The timer keeps looping at 20ms; STOP it in an ensure so the
+      # thread cannot outlive this example (and fire a stray POST into the next
+      # example's WebMock) even if the assertion raises. The global after-hook
+      # reap is the backstop; this is the local guarantee.
       expect(delivered.pop).to be(true)
-      flush_timer(manager).stop
+    ensure
+      flush_timer(manager)&.stop
     end
 
     context "timer-off mode (flush_interval: nil — Lambda recipe 4.6)" do

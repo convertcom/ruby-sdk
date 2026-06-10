@@ -163,8 +163,12 @@ RSpec.describe "ConvertSdk::Client config refresh (Story 2.7)" do
           cv.wait(mutex, remaining)
         end
       end
-      stop_timer(client)
       expect(client.data_manager.account_id).to eq("ACCT-2")
+    ensure
+      # STOP the real refresh-timer thread in an ensure so it cannot outlive the
+      # example (and fire a stray config GET into a later example) even if the
+      # assertion raises. The global after-hook reap is the backstop.
+      stop_timer(client) if client
     end
   end
 
