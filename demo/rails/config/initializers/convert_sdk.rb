@@ -99,12 +99,10 @@ else
   # LIVE / STUB mode. Endpoint overrides (Story 2.4 config options): in the OFFLINE
   # fork smoke these point at the local stub server; in live mode they are left
   # unset and default to the live Convert endpoints (interactive run against the
-  # shared staging project). NOTE: the LIVE path needs only an sdk_key — a secret
-  # is OPTIONAL (verified: config_validator.rb requires sdk_key OR data; the Story
-  # 5.1 staging suite adds sdk_key_secret only `if secret`). The shared staging
-  # key (10035569/10034190) uses NO secret, mirroring the php-sdk demo.
+  # shared staging project). The shared demo key 10035569/10034190 is a PUBLIC key
+  # used with NO secret — mirroring the php-sdk/demo/laravel setup exactly. No
+  # sdk_key_secret is wired here; the public key works without Bearer auth.
   convert_options = { sdk_key: ENV.fetch("CONVERT_SDK_KEY") }
-  convert_options[:sdk_key_secret] = ENV["CONVERT_SDK_KEY_SECRET"] if ENV["CONVERT_SDK_KEY_SECRET"].to_s != ""
 
   # Point config + track at the local stub when the smoke sets these (the SDK's
   # config_endpoint / track_endpoint options make this a one-liner — no monkey
