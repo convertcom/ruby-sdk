@@ -153,4 +153,98 @@ RSpec.describe ConvertSdk::VisitorsQueue do
       expect(queue.size).to eq(0)
     end
   end
+
+  describe "#requeue merge-preserving re-enqueue (Story 4.2 failure retention)" do
+    # The retention path: ApiManager drains, a POST fails, and the drained
+    # visitors are re-enqueued. The drained events are OLDER than anything the
+    # queue received during the failed POST, so they must precede new events for
+    # the same visitor — and never spawn a duplicate visitor entry.
+
+    it "restores drained entries into an empty queue verbatim" do
+      queue.enqueue("v1", event("e1", "var1"), segments: { "visitorType" => "new" })
+      drained = queue.drain!
+
+      queue.requeue(drained)
+
+      visitors = queue.drain!
+      expect(visitors.size).to eq(1)
+      expect(visitors.first["visitorId"]).to eq("v1")
+      expect(visitors.first["events"]).to eq([event("e1", "var1")])
+      expect(visitors.first["segments"]).to eq("visitorType" => "new")
+    end
+
+    it "tracks event count after a requeue" do
+      queue.enqueue("v1", event("e1", "var1"))
+      queue.enqueue("v1", event("e2", "var2"))
+      drained = queue.drain!
+
+      queue.requeue(drained)
+      expect(queue.size).to eq(2)
+    end
+
+    it "merges a drained visitor into a same-visitor entry that gained new events, oldest first" do
+      # Drain v1's first event, then new events arrive for v1 before the requeue.
+      queue.enqueue("v1", event("e1", "var1"))
+      drained = queue.drain!
+      queue.enqueue("v1", event("e2", "var2"))
+
+      queue.requeue(drained)
+
+      visitors = queue.drain!
+      expect(visitors.size).to eq(1)
+      expect(visitors.first["visitorId"]).to eq("v1")
+      # Drained (older) event precedes the event enqueued during the failure.
+      expect(visitors.first["events"]).to eq([event("e1", "var1"), event("e2", "var2")])
+    end
+
+    it "keeps distinct drained visitors as separate entries" do
+      queue.enqueue("v1", event("e1", "var1"))
+      queue.enqueue("v2", event("e2", "var2"))
+      drained = queue.drain!
+
+      queue.requeue(drained)
+
+      visitors = queue.drain!
+      expect(visitors.map { |v| v["visitorId"] }).to contain_exactly("v1", "v2")
+      expect(visitors).to all(satisfy { |v| v["events"].size == 1 })
+    end
+
+    it "adopts a drained entry's segments when the existing entry has none" do
+      queue.enqueue("v1", event("e1", "var1"), segments: { "visitorType" => "new" })
+      drained = queue.drain!
+      queue.enqueue("v1", event("e2", "var2")) # no segments on the new entry
+
+      queue.requeue(drained)
+
+      visitors = queue.drain!
+      expect(visitors.first["segments"]).to eq("visitorType" => "new")
+    end
+
+    it "is a no-op for an empty drained array" do
+      queue.enqueue("v1", event("e1", "var1"))
+      queue.requeue([])
+
+      expect(queue.size).to eq(1)
+    end
+
+    it "bounds the queue at 1000 on requeue overflow, dropping oldest + warn (NFR10)" do
+      # Simulate sustained outage: the queue is already near cap with newer
+      # events, and a large drained batch is requeued on top.
+      900.times { |i| queue.enqueue("live#{i}", event("e#{i}", "var#{i}")) }
+      drained = (0...300).map do |i|
+        { "visitorId" => "old#{i}", "events" => [event("o#{i}", "var#{i}")] }
+      end
+
+      queue.requeue(drained)
+
+      expect(queue.size).to eq(1000)
+      warns = sink.entries.filter_map { |level, message| message if level == :warn }
+      expect(warns).to include("VisitorsQueue#enqueue: queue full, dropping oldest event")
+      # The oldest requeued events are the ones dropped (drop-oldest), so the
+      # most-recent live traffic is retained.
+      visitors = queue.drain!
+      ids = visitors.map { |v| v["visitorId"] }
+      expect(ids).not_to include("old0")
+    end
+  end
 end
