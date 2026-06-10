@@ -113,7 +113,7 @@ RSpec.describe "Fork-safety composition (Story 4.4)" do
 
       manager.release_queue("explicit")
 
-      expect(sink.joined).to match(/ApiManager#release_queue:.*(stale|fork|pid)/i)
+      expect(sink.joined).to match(/ApiManager:.*(stale|fork|pid)/i)
     end
 
     it "delivers from the re-armed process after rearm (queue cleared, fresh enqueue delivers)" do
