@@ -4,13 +4,18 @@ module ConvertSdk
     attr_reader experience_id: String?
     attr_reader experience_key: String?
     attr_reader experience_name: String?
-    attr_reader bucketing_allocation: Integer?
+    attr_reader bucketing_allocation: (Integer | Float)?
     attr_reader id: String?
     attr_reader key: String?
     attr_reader name: String?
     attr_reader status: String?
-    attr_reader traffic_allocation: Integer?
+    attr_reader traffic_allocation: (Integer | Float)?
     attr_reader changes: Array[untyped]?
+
+    # Keyword-init construction (the frozen value-object contract). Overrides the
+    # inherited Struct positional/symbol new overloads with the keyword form the
+    # SDK actually uses (DataManager#build_bucketed_variation, story 2.11).
+    def self.new: (**untyped) -> instance
 
     def initialize: (**untyped) -> void
 
