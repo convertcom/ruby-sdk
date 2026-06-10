@@ -18,10 +18,9 @@ services:
     ports:
       - "3000:3000"
     environment:
-      # The SDK key + secret for the shared staging project (same env-var names
-      # as the Story 5.1 staging suite). Supply via your shell or a .env file.
+      # The PUBLIC SDK key for the shared staging project (10035569/10034190).
+      # This key takes NO secret — supply via your shell or a .env file.
       CONVERT_SDK_KEY: "${CONVERT_SDK_KEY:-}"
-      CONVERT_SDK_KEY_SECRET: "${CONVERT_SDK_KEY_SECRET:-}"
       # Entity keys for the demo flows (see .env.example for what they map to in
       # the staging project — the same entities the JS/PHP demos exercise).
       CONVERT_PRICING_EXPERIENCE_KEY: "${CONVERT_PRICING_EXPERIENCE_KEY:-}"
