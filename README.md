@@ -64,11 +64,7 @@ context.track_conversion("purchase", goal_data: { amount: 49.99, transaction_id:
 CONVERT_SDK.flush
 ```
 
-> **Production wiring per runtime** — Rails, Sidekiq, AWS Lambda, and plain CLI
-> each have a copy-pasteable quickstart (every recipe is backed by an automated
-> test): [Rails](docs/quickstart-rails.md) ·
-> [Sidekiq](docs/quickstart-sidekiq.md) · [AWS Lambda](docs/quickstart-lambda.md)
-> · [CLI](docs/quickstart-cli.md).
+> **Production wiring per runtime** — Rails, Sidekiq, AWS Lambda, and CLI recipes live in the wiki: [Fork Safety & Runtime Recipes](https://github.com/convertcom/ruby-sdk/wiki/ForkSafety) and [Quickstart](https://github.com/convertcom/ruby-sdk/wiki/Quickstart).
 
 ## Fork safety (zero config)
 
@@ -93,44 +89,19 @@ app.** No `postfork`, no `on_worker_boot` hook required.
 **When you need `postfork`:** only for setups that bypass `Process._fork`
 entirely (or daemonize via `Process.daemon`), or if you prefer an explicit
 re-arm (LaunchDarkly-style). The
-[fork/daemon matrix in the troubleshooting guide](docs/troubleshooting.md#forkdaemon-matrix)
+[fork/daemon matrix in the troubleshooting guide](https://github.com/convertcom/ruby-sdk/wiki/ForkSafety#forkdaemon-matrix)
 spells out exactly which runtimes are automatic and which need an explicit
 `CONVERT_SDK.postfork` call. The four quickstarts ship the right wiring for each.
 
 ## Public API
 
-Every method below is the **frozen public surface**. Full signatures and
-semantics live in the [YARD API docs](https://convertcom.github.io/ruby-sdk).
-
-### Factory
-
-| Method | Purpose |
-|--------|---------|
-| [`ConvertSdk.create(sdk_key:, data:, store:, clock:, sink:, **options)`](https://convertcom.github.io/ruby-sdk/ConvertSdk.html#create-class_method) | Build a `Client`. Pass `sdk_key:` (live config fetch) or `data:` (pre-fetched config, no fetch). The only method that may raise (`ArgumentError` on misconfiguration). |
-
-### `ConvertSdk::Client` — the process-lifetime handle
-
-| Method | Purpose |
-|--------|---------|
-| [`#create_context(visitor_id = nil, attributes = nil)`](https://convertcom.github.io/ruby-sdk/ConvertSdk/Client.html#create_context-instance_method) | Create a new per-visitor `Context`. Returns `nil` for a blank visitor id. |
-| [`#flush(reason = nil)`](https://convertcom.github.io/ruby-sdk/ConvertSdk/Client.html#flush-instance_method) | Synchronously deliver queued events. Alias: `#release_queues`. |
-| [`#postfork`](https://convertcom.github.io/ruby-sdk/ConvertSdk/Client.html#postfork-instance_method) | Explicitly re-arm after a fork (rarely needed — see [Fork safety](#fork-safety-zero-config)). |
-| [`#on(event, &block)`](https://convertcom.github.io/ruby-sdk/ConvertSdk/Client.html#on-instance_method) | Subscribe to a lifecycle event (`ready`, `config.updated`, `bucketing`, `conversion`). |
-
-### `ConvertSdk::Context` — the per-visitor surface
-
-| Method | Purpose |
-|--------|---------|
-| [`#run_experience(key, attributes = nil)`](https://convertcom.github.io/ruby-sdk/ConvertSdk/Context.html#run_experience-instance_method) | Decide one experience. Returns a `BucketedVariation` (hit) or `Sentinel` (miss). |
-| [`#run_experiences(attributes = nil)`](https://convertcom.github.io/ruby-sdk/ConvertSdk/Context.html#run_experiences-instance_method) | Decide all running experiences. Returns an `Array<BucketedVariation>` (misses excluded). |
-| [`#run_feature(key, attributes = nil)`](https://convertcom.github.io/ruby-sdk/ConvertSdk/Context.html#run_feature-instance_method) | Evaluate one feature flag with typed variables. Returns a `BucketedFeature` (or `Array`). |
-| [`#run_features(attributes = nil)`](https://convertcom.github.io/ruby-sdk/ConvertSdk/Context.html#run_features-instance_method) | Evaluate all declared features. Returns an `Array<BucketedFeature>` (enabled + disabled). |
-| [`#track_conversion(goal_key, goal_data: nil, force_multiple_transactions: false)`](https://convertcom.github.io/ruby-sdk/ConvertSdk/Context.html#track_conversion-instance_method) | Track a conversion (with optional revenue/transaction data), deduplicated per visitor per goal. |
-| [`#set_default_segments(segments)`](https://convertcom.github.io/ruby-sdk/ConvertSdk/Context.html#set_default_segments-instance_method) | Attach default report-segments for the visitor. |
-| [`#run_custom_segments(segment_keys, attributes = nil)`](https://convertcom.github.io/ruby-sdk/ConvertSdk/Context.html#run_custom_segments-instance_method) | Evaluate named custom segments and attach matching ids. |
-| [`#update_visitor_properties(properties)`](https://convertcom.github.io/ruby-sdk/ConvertSdk/Context.html#update_visitor_properties-instance_method) | Merge sticky visitor properties (in-memory + store). |
-| [`#get_visitor_data`](https://convertcom.github.io/ruby-sdk/ConvertSdk/Context.html#get_visitor_data-instance_method) | Read the visitor's persisted `StoreData`. |
-| [`#get_config_entity(key, entity_type)`](https://convertcom.github.io/ruby-sdk/ConvertSdk/Context.html#get_config_entity-instance_method) | Look up a config entity (`:experience` / `:feature` / `:goal`) by key. |
+The full public API is documented in the wiki and the YARD API reference. The
+entry point is `ConvertSdk.create` (factory); it returns a `Client` with
+`#create_context`, `#flush`, `#postfork`, and `#on`. Each `Context` exposes
+`#run_experience`, `#run_feature`, `#track_conversion`, and related methods.
+See [Code Examples](https://github.com/convertcom/ruby-sdk/wiki/CodeExamples) and
+the **[API reference (YARD)](https://convertcom.github.io/ruby-sdk)** for full
+signatures.
 
 ## The sentinel return contract
 
@@ -165,59 +136,33 @@ end
 
 ## Configuration
 
-Pass any of these as keyword options to `ConvertSdk.create`. Values are the
-JS-parity defaults (verified against the JS/PHP reference SDKs) — they are not
-tuning knobs and should not be changed without reason.
-
-| Option | Default | Purpose |
-|--------|---------|---------|
-| `sdk_key` | `nil` | Account/project SDK key (fetch mode). At least one of `sdk_key` / `data` is required. |
-| `sdk_key_secret` | `nil` | Bearer secret for config fetch. Redacted from all logs. |
-| `data` | `nil` | Pre-fetched config object (direct-data mode); skips the fetch. |
-| `environment` | `nil` | Platform environment selector (e.g. `"staging"`). |
-| `config_endpoint` | `https://cdn-4.convertexperiments.com/api/v1` | Config-fetch base URL. |
-| `track_endpoint` | `https://[project_id].metrics.convertexperiments.com/v1` | Event-tracking base URL. |
-| `data_refresh_interval` | `300` | Config-refresh cadence (seconds). **`nil` = timer-off** (Lambda/CLI). |
-| `flush_interval` | `1` | Event-flush cadence (seconds). **`nil` = timer-off** (Lambda/CLI). |
-| `event_batch_size` | `10` | Events per delivery batch. |
-| `max_traffic` | `10000` | Bucketing max traffic (JS-parity constant). |
-| `hash_seed` | `9999` | Bucketing hash seed (JS-parity constant). |
-| `keys_case_sensitive` | `true` | Rule-key case sensitivity. |
-| `negation` | `"!"` | Rule negation token. |
-| `log_level` | `ConvertSdk::LogLevel::DEBUG` | Logging threshold (`TRACE`=0 … `SILENT`=5). |
-| `tracking` | `true` | Master switch for outbound event tracking. |
-| `open_timeout` | `5` | HTTP connect timeout (seconds). |
-| `read_timeout` | `10` | HTTP read timeout (seconds). |
-
-An unknown option key raises `ArgumentError` at construction — a typo fails fast
-rather than being silently ignored.
+All configuration options are passed as keyword arguments to `ConvertSdk.create`.
+See the [Configuration wiki page](https://github.com/convertcom/ruby-sdk/wiki/Configuration)
+for the full option table with defaults. Pass `data_refresh_interval: nil` and
+`flush_interval: nil` for Lambda/CLI (timer-off mode).
 
 ## Data stores
 
-Sticky bucketing and goal deduplication persist through a **store** port. The
-default is an in-process `MemoryStore`. For multi-process fleets (Puma clusters,
-Sidekiq workers, Lambda) where state must be shared, pass a `RedisStore`:
-
-```ruby
-require "convert_sdk"
-
-store = ConvertSdk::Stores::RedisStore.new(url: ENV.fetch("REDIS_URL"))
-CONVERT_SDK = ConvertSdk.create(sdk_key: ENV.fetch("CONVERT_SDK_KEY"), store: store)
-```
-
-The `redis` gem is **your** dependency (lazily required only when a `RedisStore`
-builds its own client) — it is never a runtime dependency of this gem. Any
-object that duck-types `get`/`set` is accepted as a custom store.
+Sticky bucketing and goal deduplication persist through a store port (default:
+in-process `MemoryStore`). See
+[Configuration](https://github.com/convertcom/ruby-sdk/wiki/Configuration) for
+the `RedisStore` recipe and custom store duck-typing contract.
 
 ## Documentation
 
-- **Quickstarts:** [Rails](docs/quickstart-rails.md) ·
-  [Sidekiq](docs/quickstart-sidekiq.md) · [AWS Lambda](docs/quickstart-lambda.md)
-  · [CLI](docs/quickstart-cli.md)
-- **[Troubleshooting](docs/troubleshooting.md)** — missing-events debugging, the
-  fork/daemon matrix, and TRACE logging.
-- **[Migrating from Kameleoon](docs/migrate-from-kameleoon.md)**
-- **[API reference (YARD)](https://convertcom.github.io/ruby-sdk)**
+Full developer documentation lives in the **[Convert Ruby SDK wiki](https://github.com/convertcom/ruby-sdk/wiki)**:
+
+- [Quickstart](https://github.com/convertcom/ruby-sdk/wiki/Quickstart) ·
+  [Installation](https://github.com/convertcom/ruby-sdk/wiki/Installation) ·
+  [Initialization](https://github.com/convertcom/ruby-sdk/wiki/Initialization)
+- [Configuration](https://github.com/convertcom/ruby-sdk/wiki/Configuration) ·
+  [Return Types & Sentinels](https://github.com/convertcom/ruby-sdk/wiki/ReturnTypes) ·
+  [Code Examples](https://github.com/convertcom/ruby-sdk/wiki/CodeExamples)
+- [Fork Safety & Runtime Recipes](https://github.com/convertcom/ruby-sdk/wiki/ForkSafety) ·
+  [Tracking Control](https://github.com/convertcom/ruby-sdk/wiki/TrackingControl) ·
+  [Testing](https://github.com/convertcom/ruby-sdk/wiki/Testing)
+- Core concepts & how-to: bucketing algorithm, rule evaluation, running experiences (see the wiki sidebar)
+- **[API reference (YARD)](https://convertcom.github.io/ruby-sdk)** — generated method-level docs
 - **[Contributing](CONTRIBUTING.md)**
 
 ## Development
