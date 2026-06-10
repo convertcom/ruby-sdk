@@ -192,13 +192,20 @@ RSpec.describe ConvertSdk::Client do
     # Build a Client with one collaborator replaced by a raising double, to
     # exercise the rescue boundaries directly.
     def client_with(event_manager: nil, data_manager: nil)
+      http_client = ConvertSdk::HttpClient.new(log_manager: log_manager, open_timeout: 1, read_timeout: 1)
+      em = event_manager || ConvertSdk::EventManager.new(log_manager: log_manager)
+      dm = data_manager || ConvertSdk::DataManager.new(log_manager: log_manager)
       described_class.new(
         config: config,
         log_manager: log_manager,
-        http_client: ConvertSdk::HttpClient.new(log_manager: log_manager, open_timeout: 1, read_timeout: 1),
+        http_client: http_client,
         data_store_manager: ConvertSdk::DataStoreManager.new(log_manager: log_manager),
-        event_manager: event_manager || ConvertSdk::EventManager.new(log_manager: log_manager),
-        data_manager: data_manager || ConvertSdk::DataManager.new(log_manager: log_manager)
+        event_manager: em,
+        data_manager: dm,
+        api_manager: ConvertSdk::ApiManager.new(
+          config: config, data_manager: dm,
+          http_client: http_client, event_manager: em, log_manager: log_manager
+        )
       )
     end
 

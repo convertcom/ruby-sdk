@@ -7,10 +7,12 @@ module ConvertSdk
     @data_store_manager: DataStoreManager
     @event_manager: EventManager
     @data_manager: DataManager
+    @api_manager: ApiManager
     @refresh_timer: BackgroundTimer
 
     attr_reader config: Config
     attr_reader data_manager: DataManager
+    attr_reader api_manager: ApiManager
 
     def initialize: (
       config: Config,
@@ -18,7 +20,8 @@ module ConvertSdk
       http_client: HttpClient,
       data_store_manager: DataStoreManager,
       event_manager: EventManager,
-      data_manager: DataManager
+      data_manager: DataManager,
+      api_manager: ApiManager
     ) -> void
 
     def on: (untyped event) ?{ (untyped payload, untyped err) -> void } -> self
@@ -30,6 +33,10 @@ module ConvertSdk
     def ensure_refresh_timer!: () -> self
 
     def ensure_fresh_config!: () -> self
+
+    def flush: (?String? reason) -> self
+
+    alias release_queues flush
 
     private
 
