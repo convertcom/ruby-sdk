@@ -50,10 +50,14 @@ Metrics/MethodLength:
 # bookkeeping in the DataManager), so the cohesive feature surface lands inside
 # these two existing classes rather than being split across new files. The
 # resulting length is a deliberate architecture decision, not unmanaged growth.
+# RuleManager (Story 2.10) is added on the same principle: the OR->AND->OR_WHEN
+# walk levels + leaf evaluation + validation are one cohesive unit mirroring the
+# JS rule-manager.ts class — length is the walk surface, not unmanaged growth.
 Metrics/ClassLength:
   Exclude:
     - "lib/convert_sdk/client.rb"
     - "lib/convert_sdk/data_manager.rb"
+    - "lib/convert_sdk/rule_manager.rb"
 
 # The Client (Story 2.5) is wired by explicit constructor injection of its six
 # collaborator managers (config, log, http, data-store, event, data) — the
@@ -82,6 +86,34 @@ Naming/MethodParameterName:
   AllowedNames:
     - h1
     - k1
+
+# The 13 rule operators (Story 2.10) port the JS SDK comparisons.ts signatures
+# verbatim: each takes a trailing positional `negation` boolean so RuleManager
+# can dispatch uniformly across all operators (processor[matching](value, rule
+# value, negation), mirroring rule-manager.ts:299-319). Keyword-izing it would
+# break the uniform positional dispatch and diverge from the JS contract.
+Style/OptionalBooleanParameter:
+  Exclude:
+    - "lib/convert_sdk/comparisons.rb"
+
+# is_in / does_not_exist are the snake_case mirrors of the FROZEN wire operator
+# names isIn / doesNotExist (the two-worlds rule for operator dispatch — the
+# dispatch-map keys stay byte-identical to the rule JSON match_type, the Ruby
+# methods underneath are snake_case). is_rule_matched (RuleManager, Story 2.10)
+# is the snake_case mirror of the FROZEN cross-SDK public API name isRuleMatched
+# (rule-manager.ts:99). The predicate-prefix cop would force in?/not_exist?/
+# rule_matched?, breaking those naming contracts.
+Naming/PredicatePrefix:
+  Exclude:
+    - "lib/convert_sdk/comparisons.rb"
+    - "lib/convert_sdk/rule_manager.rb"
+
+# Comparisons is a cohesive 13-operator + numeric-helper module; the operator
+# set is the unit, not unmanaged growth. (Mirrors the ClassLength rationale for
+# the Client/DataManager feature surfaces.)
+Metrics/ModuleLength:
+  Exclude:
+    - "lib/convert_sdk/comparisons.rb"
 
 # The frozen value objects (BucketedVariation, BucketedFeature) are declared as
 # explicit `class X < Struct.new(...)` subclasses. This is the form the
