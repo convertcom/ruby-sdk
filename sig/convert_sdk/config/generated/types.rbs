@@ -146,6 +146,7 @@ module ConvertSdk
   type ga_settings = {
     "enabled" => bool?,
     "auto_revenue_tracking" => bool?,
+    "track_first_exposure_only" => bool?,
     "type" => ga_integration_type?,
     "measurementId" => String?,
     "no_wait_pageview" => bool?
