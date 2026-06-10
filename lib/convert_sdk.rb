@@ -13,6 +13,7 @@ require_relative "convert_sdk/bucketed_variation"
 require_relative "convert_sdk/bucketed_feature"
 require_relative "convert_sdk/redactor"
 require_relative "convert_sdk/log_manager"
+require_relative "convert_sdk/http_client"
 
 module ConvertSdk
   class Error < StandardError; end
