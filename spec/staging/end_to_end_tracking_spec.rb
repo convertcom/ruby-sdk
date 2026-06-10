@@ -50,18 +50,19 @@ RSpec.describe "Live end-to-end tracking (Story 5.1 AC#3)", :staging do
   let(:sink) { CapturingSink.new }
 
   # Live fetch-mode client, timer-off (no background thread), sink attached so
-  # the delivery outcome is observable. Secret variant attached when present.
+  # the delivery outcome is observable. Secret attached only when the with-secret
+  # variant's credentials include one.
   # Run at TRACE (the finest level) so the FULL lifecycle — including the
   # init-time config GET whose URL carries the raw sdk_key — is captured, making
   # the zero-leakage scan (AC#4) a real proof that the Redactor ran live, not
   # that the secret merely never appeared.
   let(:client) do
+    creds = staging_credentials
     opts = {
-      sdk_key: staging_sdk_key, data_refresh_interval: nil,
+      sdk_key: creds[:sdk_key], data_refresh_interval: nil,
       sink: sink, log_level: ConvertSdk::LogLevel::TRACE
     }
-    secret = staging_sdk_key_secret
-    opts[:sdk_key_secret] = secret if secret
+    opts[:sdk_key_secret] = creds[:sdk_key_secret] if creds[:sdk_key_secret]
     ConvertSdk.create(**opts)
   end
 
@@ -134,14 +135,15 @@ RSpec.describe "Live end-to-end tracking (Story 5.1 AC#3)", :staging do
     expect(log).to include("HttpClient#request: GET")
 
     # Zero raw secrets anywhere — the load-bearing NFR5 assertion under live runs.
-    expect(log).not_to include(staging_sdk_key)
-    secret = staging_sdk_key_secret
+    creds = staging_credentials
+    expect(log).not_to include(creds[:sdk_key])
+    secret = creds[:sdk_key_secret]
     expect(log).not_to include(secret) if secret
 
     # And the Redactor demonstrably RAN: the masked sdk_key form (first-4 + "…")
     # appears on the line that carried it (the config URL), proving redaction
     # rather than coincidental absence.
-    masked_key = "#{staging_sdk_key[0, 4]}…"
+    masked_key = "#{creds[:sdk_key][0, 4]}…"
     expect(log).to include(masked_key)
   end
 end
