@@ -126,6 +126,21 @@ Naming/PredicatePrefix:
     - "lib/convert_sdk/comparisons.rb"
     - "lib/convert_sdk/rule_manager.rb"
 
+# custom_dimension_1 .. custom_dimension_5 (Story 4.3) are the snake_case mirrors
+# of the FROZEN wire goal-data keys customDimension1 .. customDimension5
+# (the two-worlds rule — the public track_conversion goal_data: kwarg surface is
+# snake_case symbols, the wire identifiers stay camelCase via GoalDataKey). The
+# trailing digit is part of the cross-SDK key name, not a variable-numbering
+# slip; normalcasing them to custom_dimension1 would break the public contract
+# and the snake↔camel mapping. Allowed as identifiers for this cop.
+Naming/VariableNumber:
+  AllowedIdentifiers:
+    - custom_dimension_1
+    - custom_dimension_2
+    - custom_dimension_3
+    - custom_dimension_4
+    - custom_dimension_5
+
 # cast_boolean is one branch of the symmetric cast_* helper family (cast_boolean
 # / cast_integer / cast_float / cast_json) that mirrors the JS castType switch
 # (types-utils.ts:13-54) one-to-one. Only the boolean branch happens to return a

@@ -18,5 +18,9 @@ module ConvertSdk
     CUSTOM_DIMENSION_5: String
 
     ALL: Array[String]
+
+    RUBY_KEY_MAP: Hash[Symbol, String]
+
+    def self.wire_key_for: ((Symbol | String) key) -> String?
   end
 end
