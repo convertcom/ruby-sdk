@@ -1,0 +1,43 @@
+module ConvertSdk
+  # The SDK runtime handle returned by ConvertSdk.create.
+  class Client
+    @config: Config
+    @log_manager: LogManager
+    @http_client: HttpClient
+    @data_store_manager: DataStoreManager
+    @event_manager: EventManager
+    @data_manager: DataManager
+
+    attr_reader config: Config
+    attr_reader data_manager: DataManager
+
+    def initialize: (
+      config: Config,
+      log_manager: LogManager,
+      http_client: HttpClient,
+      data_store_manager: DataStoreManager,
+      event_manager: EventManager,
+      data_manager: DataManager
+    ) -> void
+
+    def on: (untyped event) ?{ (untyped payload, untyped err) -> void } -> self
+
+    def config_available?: () -> bool
+
+    def create_context: (*untyped) -> nil
+
+    private
+
+    def bootstrap_config: () -> void
+
+    def fetch_and_install_config: () -> void
+
+    def install: (untyped source, String log_message) -> void
+
+    def config_url: () -> String
+
+    def fetch_headers: () -> Hash[String, String]
+
+    def stringify_keys: (untyped node) -> untyped
+  end
+end
