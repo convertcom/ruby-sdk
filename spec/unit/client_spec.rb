@@ -185,6 +185,58 @@ RSpec.describe ConvertSdk::Client do
     end
   end
 
+  # Fix 3 — create_context re-arms on daemon bypass (refresh timer lockup fix).
+  #
+  # After Process.daemon, the inherited refresh timer has @running==true but a dead
+  # thread (fork hook never ran). Without the fix, ensure_refresh_timer! is a no-op
+  # (BackgroundTimer#start returns early because @running is true), leaving the
+  # timer permanently locked up. The fix adds ForkGuard.rearm! before
+  # ensure_refresh_timer! inside create_context, so mark_dead resets @running to
+  # false and start() spawns a fresh thread.
+  describe "#create_context fork-bypass refresh-timer rearm (Fix 3)", :fork do
+    let(:direct_data) { JSON.parse(File.read(File.expand_path("../fixtures/test-config.json", __dir__))) }
+
+    before do
+      skip("fork not supported on #{RUBY_ENGINE}") unless Process.respond_to?(:fork)
+      reset_fork_guard!
+    end
+    after { reset_fork_guard! }
+
+    it "spawns a live refresh timer after a daemon-bypass (stale owner_pid)" do
+      # Use a real data_refresh_interval so BackgroundTimer#start is not timer-off.
+      client = create(data: direct_data, data_refresh_interval: 60)
+      refresh_timer = client.instance_variable_get(:@refresh_timer)
+
+      # Simulate daemon bypass: mark owner_pid stale.
+      ConvertSdk::ForkGuard.instance_variable_set(:@owner_pid, -1)
+
+      # create_context must re-arm: mark_dead clears @running → start spawns thread.
+      client.create_context("visitor-rearm")
+
+      expect(refresh_timer.alive?).to be(true)
+    ensure
+      refresh_timer&.stop
+      ConvertSdk::ForkGuard.instance_variable_set(:@owner_pid, Process.pid)
+    end
+
+    it "without the fix the timer stays dead (confirms the bug was real)" do
+      # This test proves the invariant we are protecting: WITHOUT the rearm, a
+      # timer that is already @running==true is NOT started again by start().
+      client = create(data: direct_data, data_refresh_interval: 60)
+      refresh_timer = client.instance_variable_get(:@refresh_timer)
+
+      # Manually mark it dead (simulates what rearm! does).
+      refresh_timer.mark_dead
+      expect(refresh_timer.alive?).to be(false)
+
+      # Now start it again — must spawn a new thread.
+      refresh_timer.start
+      expect(refresh_timer.alive?).to be(true)
+    ensure
+      refresh_timer&.stop
+    end
+  end
+
   describe "never-crash boundary" do
     let(:log_manager) { ConvertSdk::LogManager.new(level: ConvertSdk::LogLevel::TRACE, sink: CapturingSink.new) }
     let(:config) { ConvertSdk::Config.new(data: { "data" => {} }, config_endpoint: HttpStubs::CONFIG_HOST) }

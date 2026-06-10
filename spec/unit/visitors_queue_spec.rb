@@ -100,12 +100,14 @@ RSpec.describe ConvertSdk::VisitorsQueue do
       expect(visitors.map { |v| v["visitorId"] }).to include("fresh")
     end
 
-    it "warns once per dropped event" do
+    it "emits a single aggregated warn for all dropped events (not one per drop)" do
       1000.times { |i| queue.enqueue("v#{i}", event("e#{i}", "var#{i}")) }
       queue.enqueue("v-new", event("e-new", "var-new"))
 
       warns = sink.entries.filter_map { |level, message| message if level == :warn }
-      expect(warns).to include("VisitorsQueue#enqueue: queue full, dropping oldest event")
+      trim_warns = warns.grep(/VisitorsQueue#trim_to_cap/)
+      expect(trim_warns).not_to be_empty
+      expect(trim_warns.size).to eq(1)
     end
   end
 
@@ -239,12 +241,61 @@ RSpec.describe ConvertSdk::VisitorsQueue do
 
       expect(queue.size).to eq(1000)
       warns = sink.entries.filter_map { |level, message| message if level == :warn }
-      expect(warns).to include("VisitorsQueue#enqueue: queue full, dropping oldest event")
+      expect(warns.grep(/VisitorsQueue#trim_to_cap/)).not_to be_empty
       # The oldest requeued events are the ones dropped (drop-oldest), so the
       # most-recent live traffic is retained.
       visitors = queue.drain!
       ids = visitors.map { |v| v["visitorId"] }
       expect(ids).not_to include("old0")
+    end
+  end
+
+  # Fix 4 — trim_to_cap: aggregated warn (not one warn per drop).
+  #
+  # When requeue() re-inserts a failed drained batch and the queue overshoots
+  # MAX_EVENTS by many events at once, a single aggregated warn must be emitted
+  # rather than a burst of N individual warn lines. This prevents log spam
+  # during a sustained outage.
+  describe "#trim_to_cap aggregated warn (Fix 4)" do
+    let(:n_batch) { 50 }
+
+    # Simulate the overshoot scenario: fill the queue to MAX_EVENTS live events,
+    # then requeue a batch of n_batch drained events. The total overshoots MAX_EVENTS
+    # by n_batch, so trim_to_cap drops all n_batch in a single mutex-held pass.
+    def overshoot_by_batch
+      # Fill to cap so requeue pushes the total n_batch OVER MAX_EVENTS.
+      ConvertSdk::VisitorsQueue::MAX_EVENTS.times do |i|
+        queue.enqueue("vlive#{i}", event("e#{i}", "var#{i}"))
+      end
+      # Build a drained batch (n_batch events) that forces n_batch drops.
+      drained_batch = [
+        {
+          "visitorId" => "old-batch",
+          "events" => Array.new(n_batch) { |j| event("ob#{j}", "vob#{j}") }
+        }
+      ]
+      queue.requeue(drained_batch)
+    end
+
+    # Shared helper: returns warn messages from the capturing sink.
+    def trim_cap_warns
+      warn_msgs = sink.entries.filter_map { |level, message| message if level == :warn }
+      warn_msgs.grep(/VisitorsQueue#trim_to_cap/)
+    end
+
+    it "emits exactly ONE aggregated warn when n>1 events are dropped in one trim pass" do
+      overshoot_by_batch
+      expect(trim_cap_warns.size).to eq(1)
+    end
+
+    it "aggregated warn message includes the dropped count" do
+      overshoot_by_batch
+      expect(trim_cap_warns.first).to match(/dropped #{n_batch} oldest event\(s\)/)
+    end
+
+    it "queue size is bounded at MAX_EVENTS after the overshoot" do
+      overshoot_by_batch
+      expect(queue.size).to eq(ConvertSdk::VisitorsQueue::MAX_EVENTS)
     end
   end
 

@@ -153,6 +153,14 @@ module ConvertSdk
         return nil
       end
 
+      # Story 4.4 — re-arm when a Process.daemon bypass left owner_pid stale.
+      # Mirrors ApiManager#guard_fork_boundary and Client#postfork: after rearm!
+      # marks the inherited refresh timer dead, the ensure_refresh_timer! call
+      # below spawns a fresh thread (BackgroundTimer#start is a no-op only when
+      # @running is true; mark_dead resets it to false). The check is a free PID
+      # comparison; always false on JRuby.
+      ForkGuard.rearm! if ForkGuard.forked?
+
       # Context creation is "first use" — lazily arm the background refresh timer.
       ensure_refresh_timer!
       build_context(visitor_id, attributes)

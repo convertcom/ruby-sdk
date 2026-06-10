@@ -209,8 +209,13 @@ module ConvertSdk
     end
 
     # JS +toNumber+ (+string-utils.ts:81-91+): numbers pass through; strings with
-    # a leading +"0"+ thousands segment treat commas as decimal points, otherwise
-    # commas are stripped, then parsed as a float.
+    # a leading +"0"+ thousands segment treat commas as decimal points (all commas
+    # replaced with dots via +tr+, matching JS's global +replace(/,/g, '.')+),
+    # otherwise commas are stripped. The result is parsed with +to_f+ (lenient,
+    # never raises) — matching JS +parseFloat()+: the leading numeric portion is
+    # extracted and a trailing-garbage input like +"0.123.456"+ returns +0.123+
+    # rather than raising. This is a verified parity fix: Ruby +Float()+ (strict)
+    # raises on that input while JS +parseFloat+ and Ruby +to_f+ do not.
     # @api private
     def self.to_number(value)
       return value if value.is_a?(Numeric)
@@ -218,7 +223,7 @@ module ConvertSdk
       str = value.to_s
       parts = str.split(",")
       normalized = parts[0] == "0" ? str.tr(",", ".") : str.delete(",")
-      Float(normalized)
+      normalized.to_f
     end
 
     # Numeric comparison core shared by {less}/{lessEqual}. Both sides are

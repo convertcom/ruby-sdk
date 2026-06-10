@@ -188,6 +188,35 @@ RSpec.describe ConvertSdk::Comparisons do
     end
   end
 
+  # --- .to_number (string-utils.ts:81-91) ---
+  #
+  # Ruby parity fix: the original implementation used strict +Float()+ (raises on
+  # trailing-garbage inputs), but JS +parseFloat+ is lenient. "0,123,456" exposes
+  # the gap: +numeric?+ admits it (the thousands form matches NUMERIC_REGEXP and
+  # +Float("0123456")+ is finite), but the leading "0" branch turns it into
+  # "0.123.456", which strict +Float()+ rejects. The fix: use +to_f+ (lenient,
+  # matches JS parseFloat) — +"0.123.456".to_f == 0.123+.
+  describe ".to_number (parseFloat parity)" do
+    [
+      [42,           42,      "Numeric pass-through (integer)"],
+      [3.14,         3.14,    "Numeric pass-through (float)"],
+      ["1234",       1234.0,  "plain integer string"],
+      ["1,234",      1234.0,  "US-thousands form (comma stripped)"],
+      ["1,234.5",    1234.5,  "US-thousands with fractional part"],
+      ["0.5",        0.5,     "decimal without leading thousands"],
+      ["0,5",        0.5,     "leading-zero thousands => comma->dot => 0.5"],
+      ["0,123,456",  0.123,   "bug-case: leading-zero hundreds-thousands => 0.123 (not raise)"]
+    ].each do |input, expected, label|
+      it "#{label}: to_number(#{input.inspect}) => #{expected}" do
+        expect(described_class.send(:to_number, input)).to eq(expected)
+      end
+    end
+
+    it "does NOT raise on '0,123,456' (the previously-broken input)" do
+      expect { described_class.send(:to_number, "0,123,456") }.not_to raise_error
+    end
+  end
+
   # The dispatch map exposes the wire/config operator names (camelCase strings)
   # mapped to the snake_case Ruby methods — the two-worlds rule for operators.
   describe ".dispatch" do

@@ -423,6 +423,51 @@ RSpec.describe ConvertSdk::ApiManager do
     end
   end
 
+  # Fix 1 — enqueue before rearm (daemon bypass data-loss fix, Story 4.4).
+  #
+  # When Process.daemon bypasses the _fork hook, ForkGuard.forked? returns true
+  # (owner_pid is stale). The original enqueue() called guard_fork_boundary AFTER
+  # queuing the event — meaning the child callback (clear_queue_ownership) fired
+  # AFTER the event was appended, wiping it. The fix moves guard_fork_boundary to
+  # the TOP of enqueue(), so the inherited queue is cleared BEFORE the child's own
+  # event is added, and the event survives to delivery.
+  describe "enqueue-before-rearm: daemon-bypass event not lost (Fix 1)" do
+    it "an event enqueued while stale (daemon-bypass simulation) survives to flush" do
+      stub_track_endpoint
+      manager = build_api_manager(flush_interval: nil)
+
+      # Simulate daemon-bypass: set owner_pid stale so ForkGuard.forked? is true.
+      # This is the same simulation used by the integration fork_safety_spec (AC#3).
+      original_pid = ConvertSdk::ForkGuard.owner_pid
+      ConvertSdk::ForkGuard.instance_variable_set(:@owner_pid, -1)
+
+      # enqueue() now calls guard_fork_boundary FIRST (clears the inherited empty
+      # queue), then adds the new event — the event must survive.
+      manager.enqueue("child-visitor", bucketing_event(experience_id: "e1", variation_id: "v1"))
+      manager.release_queue("test")
+
+      expect(captured_requests.size).to eq(1)
+      delivered = JSON.parse(captured_requests.first.body)
+      ids = delivered["visitors"].map { |v| v["visitorId"] }
+      expect(ids).to eq(["child-visitor"])
+    ensure
+      # Restore owner_pid so other examples are unaffected (reset_for_tests! in
+      # after-hook covers this too, but an ensure is an explicit safety net).
+      ConvertSdk::ForkGuard.instance_variable_set(:@owner_pid, original_pid)
+    end
+
+    it "guard_fork_boundary is called at the top of enqueue (not just in release_queue)" do
+      manager = build_api_manager(flush_interval: nil)
+
+      ConvertSdk::ForkGuard.instance_variable_set(:@owner_pid, -1)
+      expect(ConvertSdk::ForkGuard).to receive(:rearm!).and_call_original.at_least(:once)
+
+      manager.enqueue("v1", bucketing_event(experience_id: "e1", variation_id: "v1"))
+    ensure
+      ConvertSdk::ForkGuard.instance_variable_set(:@owner_pid, Process.pid)
+    end
+  end
+
   describe "outage boundedness (Story 4.2 AC#3 — NFR10)" do
     it "never grows the queue past 1000 under sustained failure + continuous enqueue" do
       stub_request(:post, "#{HttpStubs::TRACK_HOST}/10025986/v1/track/sdk-key-1")
@@ -435,7 +480,7 @@ RSpec.describe ConvertSdk::ApiManager do
 
       expect(manager.queue.size).to be <= 1000
       warns = sink.entries.filter_map { |level, message| message if level == :warn }
-      expect(warns).to include("VisitorsQueue#enqueue: queue full, dropping oldest event")
+      expect(warns.grep(/VisitorsQueue#trim_to_cap/)).not_to be_empty
     end
   end
 end

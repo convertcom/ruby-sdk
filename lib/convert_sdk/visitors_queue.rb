@@ -168,7 +168,11 @@ module ConvertSdk
 
     # Drop oldest events until the event count is within {MAX_EVENTS}. Removes a
     # visitor entry once its last event is gone. Caller holds @queue_mutex.
+    # Emits ONE aggregated warn after the loop (never one per dropped event) to
+    # avoid a warn burst when +requeue+ overshoots the cap by a full drained batch
+    # during a sustained outage.
     def trim_to_cap
+      dropped_count = 0
       while @size > MAX_EVENTS
         oldest = @items.first
         break if oldest.nil?
@@ -176,8 +180,11 @@ module ConvertSdk
         oldest["events"].shift
         @items.shift if oldest["events"].empty?
         @size -= 1
-        @log_manager.warn("VisitorsQueue#enqueue: queue full, dropping oldest event")
+        dropped_count += 1
       end
+      return if dropped_count.zero?
+
+      @log_manager.warn("VisitorsQueue#trim_to_cap: queue full, dropped #{dropped_count} oldest event(s)")
     end
   end
 end
