@@ -2,14 +2,16 @@
 
 # RBS type aliases for the Convert serving config response.
 # Generated from dist/types.gen.ts (already discriminator-corrected by fix-discriminants.js).
-# Entities covered: project/account ids; experiences + variations; features +
-# typed variables; goals (discriminated union, all 10 type values — AC4);
-# audiences; locations; segments; rule objects; GA integrations.
+# Entity field sets are REFLECTED from the TypeScript AST (qs-03 D1 / F14) — never
+# hand-listed. A backend field rename/removal changes the reflected record, which
+# the ruby-sdk contract probe (steep/config_contract_probe.rb) then catches via
+# steep check. Discriminator unions (goal_type, ga_integration_type,
+# feature_variable_type) are sourced from the corrected TS and preserved per-variant
+# (ConfigGoal admits all 10 type values — AC4).
 #
-# All records are lenient (optional fields) so real config fields absent from
-# the spec (e.g. is_system, status on goals — D6) never cause false positives.
-# The probe (steep/config_contract_probe.rb) binds SYNTHETIC values to these
-# records and accesses only the spec-declared fields the SDK depends on.
+# All record fields are nullable (?) so real config carrying extra/undeclared fields
+# never false-positives (AC2); the probe binds SYNTHETIC values and accesses only
+# the spec-declared fields the SDK depends on.
 
 module ConvertSdk
   # ── Primitive aliases ──────────────────────────────────────────────────────
@@ -18,94 +20,18 @@ module ConvertSdk
   # Typed as untyped to avoid false positives from arbitrarily deep nesting.
   type rule_object = untyped
 
-  # ── Goal discriminator ─────────────────────────────────────────────────────
+  # ── Discriminator unions (reflected from dist/types.gen.ts) ─────────────────
 
-  # All 10 ConfigGoal discriminator-mapping values (AC4).
-  # Inherited verbatim from dist/types.gen.ts lines ~1885/~1915 via
-  # fix-discriminants.js — NOT the 5-value GoalTypes enum subset.
+  # All 10 ConfigGoal discriminator-mapping values (AC4) — inherited
+  # verbatim from dist/types.gen.ts via fix-discriminants.js, NOT the 5-value
+  # GoalTypes enum subset.
   type goal_type = "dom_interaction" | "scroll_percentage" | "revenue" | "advanced" | "visits_page" | "code_trigger" | "ga_import" | "submits_form" | "clicks_link" | "clicks_element"
-
-  # ── Feature variable type ──────────────────────────────────────────────────
 
   type feature_variable_type = "boolean" | "float" | "json" | "integer" | "string"
 
-  # ── GA integration discriminator ───────────────────────────────────────────
-
   type ga_integration_type = "ga3" | "ga4"
 
-  # ── Core config entities ───────────────────────────────────────────────────
-
-  type feature_variable = {
-    "key" => String?,
-    "type" => feature_variable_type?
-  }
-
-  type config_feature = {
-    "id" => String?,
-    "name" => String?,
-    "key" => String?,
-    "variables" => Array[feature_variable]?
-  }
-
-  type experience_variation = {
-    "id" => String?,
-    "name" => String?,
-    "key" => String?,
-    "traffic_allocation" => Numeric?,
-    "status" => String?,
-    "changes" => Array[untyped]?
-  }
-
-  type config_experience = {
-    "id" => String?,
-    "name" => String?,
-    "key" => String?,
-    "type" => String?,
-    "status" => String?,
-    "variations" => Array[experience_variation]?,
-    "goals" => Array[String]?,
-    "locations" => untyped,
-    "audiences" => untyped,
-    "site_area" => rule_object,
-    "environment" => String?,
-    "integrations" => Array[untyped]?
-  }
-
-  type config_goal = {
-    "id" => String?,
-    "name" => String?,
-    "key" => String?,
-    "type" => goal_type?,
-    "rules" => rule_object
-  }
-
-  type config_audience = {
-    "id" => String?,
-    "key" => String?,
-    "name" => String?,
-    "type" => String?,
-    "rules" => rule_object
-  }
-
-  type config_location = {
-    "id" => String?,
-    "key" => String?,
-    "name" => String?,
-    "rules" => rule_object
-  }
-
-  type config_segment = {
-    "id" => String?,
-    "key" => String?,
-    "name" => String?,
-    "rules" => rule_object
-  }
-
-  type config_project = {
-    "id" => String?,
-    "name" => String?,
-    "type" => String?
-  }
+  # ── Reflected config entities ──────────────────────────────────────────────
 
   type config_response_data = {
     "account_id" => String?,
@@ -115,22 +41,113 @@ module ConvertSdk
     "audiences" => Array[config_audience]?,
     "segments" => Array[config_segment]?,
     "experiences" => Array[config_experience]?,
-    "features" => Array[config_feature]?
+    "archived_experiences" => Array[String]?,
+    "features" => Array[config_feature]?,
+    "is_debug" => bool?
   }
 
-  # ── Discriminated unions ────────────────────────────────────────────────────
+  type config_project = {
+    "id" => String?,
+    "name" => String?,
+    "type" => String?,
+    "utc_offset" => untyped?,
+    "custom_domain" => { "domain" => String?, "version" => String? }?,
+    "domains" => Array[{ "tld" => String?, "hosts" => untyped? }]?,
+    "global_javascript" => String?,
+    "settings" => { "allow_crossdomain_tracking" => bool?, "data_anonymization" => bool?, "do_not_track" => String?, "global_privacy_control" => String?, "do_not_track_referral" => bool?, "integrations" => { "google_analytics" => untyped?, "visitor_insights" => { "tracking_id" => untyped? }?, "kissmetrics" => { "enabled" => bool? }? }?, "min_order_value" => Numeric?, "max_order_value" => Numeric?, "outliers" => { "order_value" => untyped?, "products_ordered_count" => untyped? }?, "placeholders" => Array[String]?, "global_javascript_placeholders" => Array[String]?, "include_jquery" => bool?, "include_jquery_v1" => bool?, "disable_spa_functionality" => bool?, "version" => String?, "tracking_script" => untyped? }?
+  }
 
-  # ExperienceIntegrationGAServing = ExperienceIntegrationGA3 | ExperienceIntegrationGA4Base
-  # Discriminated by the "type" field: ga3 or ga4.
+  type config_experience = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "locations" => Array[String]?,
+    "site_area" => rule_object?,
+    "audiences" => Array[String]?,
+    "goals" => Array[String]?,
+    "multipage_pages" => Array[untyped]?,
+    "status" => String?,
+    "global_js" => String?,
+    "global_css" => String?,
+    "type" => String?,
+    "version" => Numeric?,
+    "variations" => Array[experience_variation]?,
+    "integrations" => Array[untyped]?,
+    "environments" => Array[String]?,
+    "environment" => String?,
+    "settings" => { "min_order_value" => Numeric?, "max_order_value" => Numeric?, "outliers" => { "order_value" => untyped?, "products_ordered_count" => untyped? }?, "placeholders" => Array[String]?, "split_url_settings" => { "split_regex_support" => bool? }?, "matching_options" => { "audiences" => String?, "locations" => String? }? }?
+  }
+
+  type experience_variation = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "traffic_allocation" => Numeric?,
+    "status" => String?,
+    "changes" => Array[feature_change_data]?
+  }
+
+  type feature_change_data = {
+    "id" => Numeric?,
+    "type" => String?,
+    "data" => { "feature_id" => Numeric?, "variables_data" => untyped? }?
+  }
+
+  type config_goal = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "type" => goal_type?,
+    "rules" => rule_object?
+  }
+
+  type config_audience = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "type" => String?,
+    "rules" => rule_object?
+  }
+
+  type config_location = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "trigger" => untyped?,
+    "rules" => rule_object?
+  }
+
+  type config_segment = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "rules" => rule_object?
+  }
+
+  type config_feature = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "variables" => Array[feature_variable]?
+  }
+
+  type feature_variable = {
+    "key" => String?,
+    "type" => feature_variable_type?
+  }
+
   type experience_integration_ga_serving = {
+    "enabled" => bool?,
+    "provider" => String?,
     "type" => ga_integration_type?,
-    "enabled" => bool?
+    "measurementId" => String?
   }
 
-  # GA_Settings = ProjectIntegrationGA3 | ProjectIntegrationGA4
-  # Discriminated by the "type" field: ga3 or ga4.
   type ga_settings = {
+    "enabled" => bool?,
+    "auto_revenue_tracking" => bool?,
     "type" => ga_integration_type?,
-    "enabled" => bool?
+    "measurementId" => String?,
+    "no_wait_pageview" => bool?
   }
 end

@@ -46,4 +46,7 @@ module ConvertSdk
 
   # Probe helper: validates experience_integration_ga_serving fields.
   def self.probe_ga_fields: (experience_integration_ga_serving) -> void
+
+  # Probe helper: validates feature_change_data fields (variation change substructure).
+  def self.probe_change_fields: (feature_change_data) -> void
 end

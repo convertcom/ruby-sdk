@@ -37,23 +37,21 @@
 # with a "D6 spec-gap" note — including them would produce a false positive.
 #
 # Current D6 spec-completeness gaps (backend follow-up required):
-#   - experience["settings"] (matching_options.audiences) — absent from config_experience
-#   - config_response_data["archived_experiences"] — absent from config_response_data
 #   - goal fields: is_system, selected_default, status — absent from config_goal
 #     (present in real config; recorded in research:F3/D6)
 
 module ConvertSdk
   # ── config_response_data (the top-level "data" envelope) ──────────────────
-  # D6 spec-gap: "archived_experiences" omitted (absent from config_response_data).
   probe_response_data_fields(
-    "account_id" => nil,   # => DataManager#account_id reads data["account_id"]
-    "project" => nil,      # => DataManager#project reads data["project"]
-    "experiences" => nil,  # => DataManager#experiences reads data["experiences"]
-    "features" => nil,     # => DataManager#features reads data["features"]
-    "goals" => nil,        # => DataManager#goals reads data["goals"]
-    "audiences" => nil,    # => DataManager#audiences reads data["audiences"]
-    "segments" => nil,     # => DataManager#segments reads data["segments"]
-    "locations" => nil     # => DataManager#locations reads data["locations"]
+    "account_id" => nil,            # => DataManager#account_id reads data["account_id"]
+    "project" => nil,               # => DataManager#project reads data["project"]
+    "experiences" => nil,           # => DataManager#experiences reads data["experiences"]
+    "archived_experiences" => nil,  # => DataManager#archived_experiences (:297) -> archived?
+    "features" => nil,              # => DataManager#features reads data["features"]
+    "goals" => nil,                 # => DataManager#goals reads data["goals"]
+    "audiences" => nil,             # => DataManager#audiences reads data["audiences"]
+    "segments" => nil,              # => DataManager#segments reads data["segments"]
+    "locations" => nil              # => DataManager#locations reads data["locations"]
   )
 
   # ── config_project ─────────────────────────────────────────────────────────
@@ -64,8 +62,6 @@ module ConvertSdk
   )
 
   # ── config_experience ──────────────────────────────────────────────────────
-  # D6 spec-gap: "settings" omitted (absent from config_experience; SDK reads
-  # experience.dig("settings","matching_options","audiences") in all_match_required?).
   probe_experience_fields(
     "id" => nil,          # => eligible_experience, archived?, build_bucketed_variation
     "key" => nil,         # => find_by_key, build_bucketed_variation
@@ -77,7 +73,8 @@ module ConvertSdk
     "site_area" => nil,   # => match_locations reads experience["site_area"]
     "audiences" => nil,   # => audiences_to_check, custom_segments_matched?
     "variations" => nil,  # => variation_list reads experience["variations"]
-    "goals" => nil        # => experience["goals"] consumed by readers
+    "goals" => nil,       # => experience["goals"] consumed by readers
+    "settings" => { "matching_options" => { "audiences" => nil } } # => all_match_required? (:730-731)
   )
 
   # ── experience_variation ───────────────────────────────────────────────────
@@ -144,5 +141,14 @@ module ConvertSdk
   probe_ga_fields(
     "type" => nil, # => ga_integration_type discriminator (ga3 | ga4)
     "enabled" => nil
+  )
+
+  # ── feature_change_data (variation change substructure — Facet 2) ──────────
+  probe_change_fields(
+    "type" => nil, # => FeatureManager reads change["type"] == FULLSTACK_FEATURE (:199)
+    "data" => {    # => change["data"] (:213)
+      "feature_id" => nil,    # => data["feature_id"] (:223)
+      "variables_data" => nil # => data["variables_data"] (:217)
+    }
   )
 end
