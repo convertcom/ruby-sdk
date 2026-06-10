@@ -44,6 +44,45 @@ jobs:
           bundler-cache: true
       - name: RuboCop
         run: bundle exec rubocop
+      - name: Release-safety — forbidden release mechanisms absent
+        # A STEP in the existing lint job (NOT a new required check) so the PR
+        # check count stays put (Story 5.4 / Story 1.1 precedent). Asserts the
+        # ratified-forbidden release mechanisms never reappear in the release
+        # config/workflow/Rakefile surface. Each check matches ACTUAL USAGE, not
+        # prose — the release.config.mjs / release.yml comments deliberately NAME
+        # these forbidden tokens to document the prohibition, so a naive
+        # whole-file grep would false-positive on the very files documenting it.
+        # Scope is the config/workflow/Rakefile surface only — NOT docs.
+        #   - @semantic-release/git / @semantic-release/changelog → matched only
+        #     as a QUOTED plugin/devDependency entry in release.config.mjs /
+        #     package.json (would commit to main / produce a committed CHANGELOG).
+        #   - bundler/gem_tasks required, or a `task :release` defined → either
+        #     resurrects `rake release`, whose git_push pushes a branch ref
+        #     (Android qs-03 GH013).
+        #   - `uses: rubygems/release-gem` in any workflow → the gem-release
+        #     action this pipeline deliberately replaced with OIDC semantic-release.
+        run: |
+          status=0
+          if grep -rnE "['\"]@semantic-release/(git|changelog)['\"]" release.config.mjs package.json; then
+            echo "::error::Forbidden semantic-release plugin (git/changelog) present — this pipeline commits NOTHING to main and ships NO CHANGELOG."
+            status=1
+          fi
+          if grep -nE "^[[:space:]]*require[[:space:]].*bundler/gem_tasks" Rakefile; then
+            echo "::error::bundler/gem_tasks is required in the Rakefile — it defines 'rake release' (git_push branch ref → GH013). Forbidden."
+            status=1
+          fi
+          if grep -nE "^[[:space:]]*task[[:space:]].*:release|^[[:space:]]*task[[:space:]]+[\"']release" Rakefile; then
+            echo "::error::A 'rake release' task is defined in the Rakefile. Forbidden — publishing happens only via the OIDC release.yml."
+            status=1
+          fi
+          if grep -rnE "^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*rubygems/release-gem" .github/workflows/; then
+            echo "::error::A workflow uses rubygems/release-gem — replaced by OIDC semantic-release (release.yml). Forbidden."
+            status=1
+          fi
+          if [ "$status" -eq 0 ]; then
+            echo "Release-safety guard OK: no forbidden release mechanisms found."
+          fi
+          exit $status
       - name: Docs — broken relative-link check
         # A STEP in the existing lint job (NOT a new required check) so the PR
         # check count stays put. Extracts every Markdown link in README /
