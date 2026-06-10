@@ -99,14 +99,25 @@ module ConvertSdk
   #   the config-cache TTL math (Story 2.7); defaults to the SDK's monotonic
   #   clock. Injectable so tests control staleness without real waits. NOT a
   #   {Config} option — extracted here before validation.
+  # @param sink [Object, nil] an optional initial log sink (anything responding
+  #   to debug/info/warn/error). Forwarded to the internally-built {LogManager}
+  #   so the FULL lifecycle — including the construction-time config fetch
+  #   (+HttpClient#request+ debug line, which carries the sdk_key in the config
+  #   URL) — is observable through the public entry point. Without this seam a
+  #   host could only attach a sink AFTER {create}, missing every init-time line
+  #   (and therefore the init-time redaction proof). NOT a {Config} option —
+  #   extracted here before validation (like +clock+). Invalid sinks are rejected
+  #   by {LogManager#add_sink}, not raised.
   # @param options [Hash{Symbol=>Object}] any other {Config::DEFAULTS} option
   #   (+sdk_key_secret+, +environment+, +log_level+, timeouts, …).
   # @raise [ArgumentError] on misconfiguration (missing sdk_key+data, bad types,
   #   unknown option) — the only exception {create} lets escape.
   # @return [Client] the wired SDK client.
-  def self.create(sdk_key: nil, data: nil, store: nil, clock: nil, **options)
+  def self.create(sdk_key: nil, data: nil, store: nil, clock: nil, sink: nil, **options)
     config_options = options.merge(sdk_key: sdk_key, data: data)
-    log_manager = LogManager.new(level: options.fetch(:log_level, Config::DEFAULTS[:log_level]))
+    log_manager = LogManager.new(
+      level: options.fetch(:log_level, Config::DEFAULTS[:log_level]), sink: sink
+    )
     # Wire the ForkGuard re-arm logger (Story 2.7) so fork-detection debug lines
     # flow through the redacting LogManager. nil-safe before wiring.
     ForkGuard.logger = log_manager
