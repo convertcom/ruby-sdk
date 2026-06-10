@@ -170,6 +170,7 @@ module ConvertSdk
       not_exists(value, test_against, negation)
     end
 
+    # Maps each wire comparison operator name to its implementing method symbol.
     DISPATCH = {
       "equals" => :equals,
       "equalsNumber" => :equals_number,

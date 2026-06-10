@@ -97,8 +97,8 @@ module ConvertSdk
     private
 
     # The loop body. Interruptible-sleeps for +interval+ (a concrete Float), then
-    # runs the tick under the never-crash rescue. Exits when #stop clears
-    # @running.
+    # runs the tick under the never-crash rescue. Exits when +#stop+ clears the
+    # +running+ flag.
     # @param interval [Float] validated sleep duration.
     def run_loop(interval)
       loop do
