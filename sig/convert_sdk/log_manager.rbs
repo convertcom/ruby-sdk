@@ -1,0 +1,37 @@
+module ConvertSdk
+  # Multi-sink, level-gated logger with secret redaction wired in by construction.
+  class LogManager
+    REQUIRED_SINK_METHODS: Array[Symbol]
+
+    @level: Integer
+    @redactor: Redactor
+    @sinks: Array[untyped]
+    @sinks_mutex: Thread::Mutex
+
+    def initialize: (?level: Integer, ?sink: untyped?, ?secrets: Array[String]) -> void
+
+    def add_sink: (untyped sink) -> self
+
+    def register_secret: (String? secret) -> void
+
+    def trace: (untyped message) -> void
+
+    def debug: (untyped message) -> void
+
+    def info: (untyped message) -> void
+
+    def warn: (untyped message) -> void
+
+    def error: (untyped message) -> void
+
+    private
+
+    def emit: (Integer level, untyped message) -> void
+
+    def loggable: (untyped message) -> String
+
+    def sink_method_for: (Integer level) -> Symbol
+
+    def each_sink: () { (untyped sink) -> void } -> void
+  end
+end
