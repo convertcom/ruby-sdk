@@ -1,0 +1,43 @@
+module ConvertSdk
+  # The SDK's configuration surface and wire-translation boundary #1.
+  class Config
+    MILLISECONDS_PER_SECOND: Integer
+    MAX_HASH: Integer
+    DEFAULTS: Hash[Symbol, untyped]
+    KNOWN_KEYS: Array[Symbol]
+
+    attr_reader sdk_key: String?
+    attr_reader sdk_key_secret: String?
+    attr_reader data: Hash[untyped, untyped]?
+    attr_reader environment: String?
+    attr_reader config_endpoint: String
+    attr_reader track_endpoint: String
+    attr_reader max_traffic: Integer
+    attr_reader hash_seed: Integer
+    attr_reader data_refresh_interval: (Integer | Float)?
+    attr_reader event_batch_size: Integer
+    attr_reader flush_interval: (Integer | Float)?
+    attr_reader keys_case_sensitive: bool
+    attr_reader negation: String
+    attr_reader log_level: Integer
+    attr_reader tracking: bool
+    attr_reader open_timeout: (Integer | Float)
+    attr_reader read_timeout: (Integer | Float)
+
+    def initialize: (?log_manager: LogManager?, **untyped options) -> void
+
+    def max_hash: () -> Integer
+
+    def to_internal: () -> Hash[String, untyped]
+
+    private
+
+    def assign: (Hash[Symbol, untyped] merged) -> void
+
+    def reject_unknown_keys: (Hash[Symbol, untyped] options) -> void
+
+    def to_milliseconds: ((Integer | Float)? seconds) -> (Integer | Float)?
+
+    def register_secrets: (LogManager? log_manager) -> void
+  end
+end
