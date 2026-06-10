@@ -58,14 +58,18 @@ module ConvertSdk
     #   decisioning methods that land in later stories).
     # @param log_manager [LogManager] the redacting logging surface.
     # @param config [Config] the validated configuration surface.
+    # @param experience_manager [ExperienceManager, nil] the variation-selection
+    #   surface backing {#run_experience}/{#run_experiences} (Story 2.11). nil
+    #   leaves the shell decisioning-less (the 2.8 lookup-only construction).
     def initialize(visitor_id:, data_manager:, data_store_manager:, event_manager:,
-                   log_manager:, config:, attributes: nil)
+                   log_manager:, config:, attributes: nil, experience_manager: nil)
       @visitor_id = visitor_id
       @data_manager = data_manager
       @data_store_manager = data_store_manager
       @event_manager = event_manager
       @log_manager = log_manager
       @config = config
+      @experience_manager = experience_manager
       # Deep-stringify the caller's attributes ONCE at the boundary; internals
       # only ever see string keys. nil → empty. The caller's hash is never mutated.
       @attributes = deep_stringify(attributes || {})
@@ -153,7 +157,100 @@ module ConvertSdk
       nil
     end
 
+    # Decide a single experience for this visitor and return its variation.
+    #
+    # The optional per-call +attributes+ are deep-stringified and merged OVER the
+    # context's own attributes (per-call wins), then handed to the ordered
+    # decision flow ({ExperienceManager#select_variation} -> {DataManager}). On a
+    # hit a frozen {BucketedVariation} is returned and the {SystemEvents::BUCKETING}
+    # lifecycle event fires (payload +{visitor_id, experience_key, variation_key}+,
+    # deferred for late subscribers — JS context.ts:153-162). On a miss the
+    # matching {Sentinel} ({RuleError}/{BucketingError}) is returned and NO event
+    # fires. The integrator pattern works on both:
+    #
+    #   case (v = context.run_experience("homepage-test")).key
+    #   when nil then render_default          # a sentinel miss (key is nil)
+    #   else          render_variation(v.key) # a real decision
+    #   end
+    #
+    # Never raises into the host: an internal failure degrades to
+    # {RuleError::NO_DATA_FOUND} + an +error+ log (NFR9).
+    #
+    # @param key [String] the experience +key+.
+    # @param attributes [Hash, nil] optional per-call visitor properties merged
+    #   over the context attributes (deep-stringified).
+    # @return [BucketedVariation, Sentinel] a frozen variation or a sentinel miss.
+    def run_experience(key, attributes = nil)
+      manager = @experience_manager
+      return RuleError::NO_DATA_FOUND if manager.nil?
+
+      @data_manager.ensure_fresh_config!
+      variation = manager.select_variation(@visitor_id, key, decision_attributes(attributes))
+      fire_bucketing(key, variation) unless variation.is_a?(Sentinel)
+      variation
+    rescue StandardError => e
+      @log_manager.error("Context#run_experience: #{e.class}: #{e.message}")
+      RuleError::NO_DATA_FOUND
+    end
+
+    # Decide ALL applicable (running) experiences for this visitor and return the
+    # list of bucketed variations (FR16). Misses are FILTERED OUT (JS parity —
+    # experience-manager.ts:159-168): the list contains ONLY frozen
+    # {BucketedVariation}s the visitor was actually bucketed into, never sentinels.
+    # The {SystemEvents::BUCKETING} event fires once per returned variation
+    # (JS context.ts:209-222).
+    #
+    #   context.run_experiences.each { |v| activate(v.experience_key, v.key) }
+    #
+    # Never raises into the host: an internal failure degrades to +[]+ + an
+    # +error+ log (NFR9).
+    #
+    # @param attributes [Hash, nil] optional per-call visitor properties merged
+    #   over the context attributes (deep-stringified).
+    # @return [Array<BucketedVariation>] the frozen variations (misses excluded).
+    def run_experiences(attributes = nil)
+      manager = @experience_manager
+      return [] if manager.nil?
+
+      @data_manager.ensure_fresh_config!
+      variations = manager.select_variations(@visitor_id, decision_attributes(attributes))
+      variations.each { |variation| fire_bucketing(variation.experience_key, variation) }
+      variations
+    rescue StandardError => e
+      @log_manager.error("Context#run_experiences: #{e.class}: #{e.message}")
+      []
+    end
+
     private
+
+    # Build the bucketing-attributes hash for the decision flow: the context
+    # attributes deep-merged with the deep-stringified per-call attributes
+    # (per-call wins). The merged map is the +visitor_properties+ that drive the
+    # AUDIENCE step. +location_properties+ are a SEPARATE optional attribute (JS
+    # context.ts:135-143 spreads only an explicit +attributes.locationProperties+;
+    # it never defaults location matching to the visitor properties) — supplied
+    # only when the caller passes +location_properties+/+"location_properties"+.
+    # +environment+ is lifted out so the flow's environment-match step sees it.
+    def decision_attributes(per_call)
+      merged = @attributes.merge(deep_stringify(per_call || {}))
+      {
+        visitor_properties: merged,
+        location_properties: merged["location_properties"],
+        environment: merged["environment"]
+      }
+    end
+
+    # Fire the BUCKETING lifecycle event for a fresh/decided variation (deferred
+    # so late subscribers are replayed). Contained — a raising listener never
+    # crosses back here (EventManager swallows it).
+    def fire_bucketing(experience_key, variation)
+      @event_manager.fire(
+        SystemEvents::BUCKETING,
+        { visitor_id: @visitor_id, experience_key: experience_key, variation_key: variation.key },
+        nil,
+        deferred: true
+      )
+    end
 
     # The account half of the visitor store key. The {DataManager} reader is
     # +nil+ before any config is installed (degrade-gracefully, NFR12); coerced
