@@ -327,7 +327,143 @@ module ConvertSdk
       retrieve_bucketing(visitor_id, experience, attributes)
     end
 
+    # ========================== CONVERSION TRACKING =========================
+    # Track a conversion for +visitor_id+ on +goal_key+ with optional revenue /
+    # transaction +goal_data+, applying two-level goal dedup (Story 4.3).
+    #
+    # == Two-level dedup + the Android qs-01 structural fix
+    #
+    # Dedup is keyed at TWO levels: the visitor lives in the STORE KEY
+    # (+{accountId}-{projectId}-{visitorId}+) and the goal lives in the
+    # +goals[goalId]+ map inside that visitor's +StoreData+. The CHECK (has this
+    # goal already converted?) and the MARK (record it) both run inside ONE
+    # {DataStoreManager#merge_visitor_data} block — i.e. inside the store's merge
+    # mutex — so a check-then-mark race cannot double-count (the Android qs-01
+    # defect class). The block computes the enqueue verdict into a closure flag;
+    # the caller enqueues only when that flag came back true.
+    #
+    # == force_multiple_transactions (accepted parity break)
+    #
+    # +force_multiple_transactions: true+ BYPASSES the dedup check entirely (the
+    # conversion is always returned for enqueue) but does NOT re-mark the goal —
+    # the prior mark, if any, persists. Conservative default: force is for
+    # legitimate multiple transactions, not to reset dedup state; re-marking
+    # would corrupt dedup for a subsequent non-forced call on the same goal.
+    #
+    # == Return contract
+    #
+    # Returns the wire-shaped conversion +data+ hash to enqueue —
+    # +{"goalId" => id, "goalData" => [{key,value}...]? (omitted when none),
+    # "bucketingData" => {experienceId => variationId}? (omitted when the visitor
+    # has no stored bucketing)}+ — or +nil+ when nothing should be enqueued
+    # (unknown goal key, or a deduplicated repeat). Each non-enqueue path emits a
+    # debug line (sentinel/nil + silent is forbidden). The Context wraps the
+    # returned data hash into the +{eventType:'conversion', data:{...}}+ envelope.
+    #
+    # @param visitor_id [String] the converting visitor.
+    # @param goal_key [String] the goal +key+ (resolved to its id via the reader).
+    # @param goal_data [Hash, nil] optional revenue/transaction data; keys are the
+    #   snake_case Ruby forms (or wire forms) of the eight {GoalDataKey} platform
+    #   keys — unknown keys are rejected with a debug line.
+    # @param force_multiple_transactions [Boolean] bypass the dedup check.
+    # @return [Hash, nil] the conversion data hash to enqueue, or nil.
+    def convert(visitor_id, goal_key, goal_data: nil, force_multiple_transactions: false)
+      goal = goal_by_key(goal_key)
+      if goal.nil?
+        @log_manager&.debug("DataManager#convert: no goal found for key=#{goal_key}")
+        return nil
+      end
+
+      goal_id = goal["id"].to_s
+      return nil unless dedup_and_mark(visitor_id, goal_id, force_multiple_transactions)
+
+      build_conversion_data(visitor_id, goal_id, goal_data)
+    end
+
     private
+
+    # The atomic check-then-mark (Story 4.3 / qs-01). Runs the dedup decision AND
+    # the mark inside ONE store-merge block (the merge mutex). Returns true when
+    # the caller should enqueue, false when the conversion is deduplicated.
+    #
+    # - force: enqueue=true, write NOTHING (no re-mark — conservative default).
+    # - already marked (no force): enqueue=false (debug log), write nothing.
+    # - unmarked: enqueue=true, write +{goals: {goalId => true}}+ (the mark).
+    #
+    # The verdict is captured in a closure flag because the merge block returns
+    # the merged StoreData, not the decision. A nil store manager (standalone
+    # construction) degrades to enqueue=true with no persistence.
+    def dedup_and_mark(visitor_id, goal_id, force)
+      manager = @data_store_manager
+      return true if manager.nil?
+
+      should_enqueue = false
+      manager.merge_visitor_data(@account_resolver.call.to_s, @project_resolver.call.to_s, visitor_id) do |current|
+        already = goal_marked?(current, goal_id)
+        should_enqueue, partial = resolve_dedup(goal_id, already, force)
+        partial
+      end
+      should_enqueue
+    end
+
+    # The dedup verdict for one (goal, already-marked?, force) triple: returns
+    # +[should_enqueue, store_partial]+. Kept pure (no I/O) so the merge block
+    # stays a thin atomic wrapper around it.
+    def resolve_dedup(goal_id, already, force)
+      if force
+        [true, {}] # bypass check; do NOT re-mark (prior mark persists)
+      elsif already
+        @log_manager&.debug("DataManager#convert: goal #{goal_id} already converted — skipping (dedup)")
+        [false, {}]
+      else
+        [true, { "goals" => { goal_id => true } }] # first conversion → mark
+      end
+    end
+
+    # True when the visitor's stored +goals+ map carries a truthy mark for goal.
+    def goal_marked?(current, goal_id)
+      goals = current["goals"]
+      goals.is_a?(Hash) && goals[goal_id]
+    end
+
+    # Build the wire-shaped conversion +data+ hash: +goalId+ always; +goalData+
+    # only when at least one valid pair was supplied; +bucketingData+ only when
+    # the visitor has a non-empty stored bucketing map (JS parity — omitted for
+    # an unbucketed visitor).
+    def build_conversion_data(visitor_id, goal_id, goal_data)
+      data_hash = { "goalId" => goal_id } #: Hash[String, untyped]
+      pairs = goal_data_pairs(goal_data)
+      data_hash["goalData"] = pairs unless pairs.empty?
+      bucketing = stored_bucketing_map(visitor_id)
+      data_hash["bucketingData"] = bucketing unless bucketing.empty?
+      data_hash
+    end
+
+    # Translate the caller's +goal_data+ hash into the wire +[{key, value}]+ pair
+    # array (the JS wire shape — NOT a flat map). Each key is validated through
+    # {GoalDataKey.wire_key_for}; unknown keys are dropped with a debug line.
+    # Insertion order follows the caller's hash (Ruby hashes are ordered).
+    def goal_data_pairs(goal_data)
+      return [] unless goal_data.is_a?(Hash)
+
+      pairs = [] #: Array[Hash[String, untyped]]
+      goal_data.each do |key, value|
+        wire_key = GoalDataKey.wire_key_for(key)
+        if wire_key.nil?
+          @log_manager&.debug("DataManager#convert: ignoring unknown goalData key=#{key}")
+          next
+        end
+        pairs << { "key" => wire_key, "value" => value }
+      end
+      pairs
+    end
+
+    # The visitor's stored bucketing map (+StoreData["bucketing"]+,
+    # +{experienceId => variationId}+) for +bucketingData+ attribution, or +{}+.
+    def stored_bucketing_map(visitor_id)
+      bucketing = visitor_store_data(visitor_id)["bucketing"]
+      bucketing.is_a?(Hash) ? bucketing : {}
+    end
 
     # Steps 1-7: resolve the experience and run every eligibility gate up to (but
     # not including) traffic allocation. Returns the matched experience Hash, a
