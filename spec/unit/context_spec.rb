@@ -13,6 +13,14 @@ RSpec.describe ConvertSdk::Context do
   let(:rule_manager) { ConvertSdk::RuleManager.new(config: config, log_manager: log_manager) }
   let(:experience_manager) { ConvertSdk::ExperienceManager.new(data_manager: data_manager, log_manager: log_manager) }
   let(:feature_manager) { ConvertSdk::FeatureManager.new(data_manager: data_manager, log_manager: log_manager) }
+  let(:segments_manager) do
+    ConvertSdk::SegmentsManager.new(
+      data_manager: data_manager, data_store_manager: data_store_manager,
+      account_resolver: -> { ConfigFixture.account_id },
+      project_resolver: -> { ConfigFixture.project_id },
+      rule_manager: rule_manager, log_manager: log_manager
+    )
+  end
 
   # A DataManager loaded with the vendored fixture (direct-data install) so the
   # config readers behind get_config_entity return real entities. Wired with the
@@ -38,19 +46,22 @@ RSpec.describe ConvertSdk::Context do
     end
   end
 
+  # The default wired collaborators — a single source merged with per-example
+  # +overrides+ so one example can swap one collaborator for a raising double.
+  def default_collaborators
+    {
+      data_manager: data_manager, data_store_manager: data_store_manager,
+      event_manager: event_manager, log_manager: log_manager, config: config,
+      experience_manager: experience_manager, feature_manager: feature_manager,
+      segments_manager: segments_manager
+    }
+  end
+
   # Build a Context through the real constructor with the wired collaborators.
-  # +overrides+ lets a single example swap one collaborator for a raising double.
   def build_context(visitor_id: "visitor-1", attributes: nil, **overrides)
     described_class.new(
-      visitor_id: visitor_id,
-      attributes: attributes,
-      data_manager: overrides.fetch(:data_manager, data_manager),
-      data_store_manager: overrides.fetch(:data_store_manager, data_store_manager),
-      event_manager: overrides.fetch(:event_manager, event_manager),
-      log_manager: overrides.fetch(:log_manager, log_manager),
-      config: overrides.fetch(:config, config),
-      experience_manager: overrides.fetch(:experience_manager, experience_manager),
-      feature_manager: overrides.fetch(:feature_manager, feature_manager)
+      visitor_id: visitor_id, attributes: attributes,
+      **default_collaborators.merge(overrides)
     )
   end
 
@@ -432,6 +443,91 @@ RSpec.describe ConvertSdk::Context do
     it "performs ZERO HTTP on the cached-config evaluation (NFR1)" do
       ctx(attributes: matching.merge("environment" => "staging")).run_features
       expect(a_request(:any, /.*/)).not_to have_been_made
+    end
+  end
+
+  describe "#set_default_segments (Story 3.2 — AC#1)" do
+    def stored_segments(visitor_id)
+      build_context(visitor_id: visitor_id).get_visitor_data["segments"]
+    end
+
+    it "persists report-segments into the visitor's StoreData (deep-stringified)" do
+      build_context(visitor_id: "v-seg").set_default_segments(visitorType: "new", country: "US")
+      expect(stored_segments("v-seg")).to eq("visitorType" => "new", "country" => "US")
+    end
+
+    it "drops non-report keys before persisting (report-segment filter)" do
+      build_context(visitor_id: "v-seg2").set_default_segments(country: "US", plan: "pro")
+      expect(stored_segments("v-seg2")).to eq("country" => "US")
+    end
+
+    it "returns self (chainable)" do
+      ctx = build_context(visitor_id: "v-chain")
+      expect(ctx.set_default_segments(country: "US")).to be(ctx)
+    end
+
+    it "never crashes — a raising segments_manager degrades to self + error log" do
+      raising = instance_double(ConvertSdk::SegmentsManager)
+      allow(raising).to receive(:put_segments).and_raise(StandardError, "boom")
+      ctx = build_context(segments_manager: raising)
+      result = nil
+      expect { result = ctx.set_default_segments(country: "US") }.not_to raise_error
+      expect(result).to be(ctx)
+      expect(sink.joined).to include("Context#set_default_segments")
+    end
+  end
+
+  describe "#run_custom_segments (Story 3.2 — AC#2,#4)" do
+    def stored_segments(visitor_id)
+      build_context(visitor_id: visitor_id).get_visitor_data["segments"]
+    end
+
+    it "attaches matching custom segment ids under customSegments" do
+      build_context(visitor_id: "v-cs").run_custom_segments(["test-segments-1"], ruleData: { enabled: true })
+      expect(stored_segments("v-cs")).to eq("customSegments" => ["200299434"])
+    end
+
+    it "does not attach when the segment rules do not match" do
+      build_context(visitor_id: "v-cs2").run_custom_segments(["test-segments-1"], ruleData: { enabled: false })
+      expect(stored_segments("v-cs2")).to eq({})
+    end
+
+    it "evaluates against stored segments merged with per-call ruleData (JS getVisitorProperties)" do
+      ctx = build_context(visitor_id: "v-cs3", attributes: { enabled: true })
+      ctx.run_custom_segments(["test-segments-1"])
+      expect(stored_segments("v-cs3")).to eq("customSegments" => ["200299434"])
+    end
+
+    it "returns nil on a match (no RuleError)" do
+      result = build_context(visitor_id: "v-cs4")
+               .run_custom_segments(["test-segments-1"], ruleData: { enabled: true })
+      expect(result).to be_nil
+    end
+
+    it "skips an unknown segment key (debug log, never raises)" do
+      ctx = build_context(visitor_id: "v-cs5")
+      result = nil
+      expect { result = ctx.run_custom_segments(["no-such-segment"], ruleData: { enabled: true }) }
+        .not_to raise_error
+      expect(result).to be_nil
+      expect(stored_segments("v-cs5")).to eq({})
+    end
+
+    it "never crashes — a raising segments_manager degrades to nil + error log" do
+      raising = instance_double(ConvertSdk::SegmentsManager)
+      allow(raising).to receive(:select_custom_segments).and_raise(StandardError, "boom")
+      ctx = build_context(visitor_id: "v-cs6", segments_manager: raising)
+      result = :sentinel
+      expect { result = ctx.run_custom_segments(["test-segments-1"]) }.not_to raise_error
+      expect(result).to be_nil
+      expect(sink.joined).to include("Context#run_custom_segments")
+    end
+
+    it "does NOT fire SystemEvents::SEGMENTS on attachment (JS parity, F-014)" do
+      fired = []
+      event_manager.on(ConvertSdk::SystemEvents::SEGMENTS) { |payload, _err| fired << payload }
+      build_context(visitor_id: "v-cs7").run_custom_segments(["test-segments-1"], ruleData: { enabled: true })
+      expect(fired).to be_empty
     end
   end
 end

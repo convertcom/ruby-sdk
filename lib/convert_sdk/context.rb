@@ -64,9 +64,12 @@ module ConvertSdk
     # @param feature_manager [FeatureManager, nil] the feature-resolution +
     #   typed-variable-casting surface backing {#run_feature}/{#run_features}
     #   (Story 3.1). nil leaves the feature methods miss-only (no decisioning).
+    # @param segments_manager [SegmentsManager, nil] the visitor-segmentation
+    #   surface backing {#set_default_segments}/{#run_custom_segments} (Story 3.2).
+    #   nil leaves the segmentation methods inert (no persistence).
     def initialize(visitor_id:, data_manager:, data_store_manager:, event_manager:,
                    log_manager:, config:, attributes: nil, experience_manager: nil,
-                   feature_manager: nil)
+                   feature_manager: nil, segments_manager: nil)
       @visitor_id = visitor_id
       @data_manager = data_manager
       @data_store_manager = data_store_manager
@@ -75,6 +78,7 @@ module ConvertSdk
       @config = config
       @experience_manager = experience_manager
       @feature_manager = feature_manager
+      @segments_manager = segments_manager
       # Deep-stringify the caller's attributes ONCE at the boundary; internals
       # only ever see string keys. nil → empty. The caller's hash is never mutated.
       @attributes = deep_stringify(attributes || {})
@@ -296,7 +300,77 @@ module ConvertSdk
       []
     end
 
+    # Set default report-segments for this visitor (FR28; JS +setDefaultSegments+
+    # -> +SegmentsManager#put_segments+, +context.ts:434-436+). The supplied
+    # segments are deep-stringified at this public boundary, then filtered to the
+    # seven JS {SegmentsManager::SEGMENTS_KEYS} report keys and merged into the
+    # visitor's +StoreData["segments"]+ (non-report keys are dropped). Caller
+    # supplies the JS wire keys (+visitorType+, +customSegments+, …) — these ARE
+    # the public contract (FR30); the diverged PHP variants are never produced.
+    #
+    # NO lifecycle event fires on segment attachment (JS parity — neither
+    # +setDefaultSegments+ nor +runCustomSegments+ fire +SystemEvents.SEGMENTS+).
+    #
+    # Never raises into the host: a failure degrades to an +error+ log and returns
+    # +self+ (NFR9).
+    #
+    # @param segments [Hash] the candidate report-segments (symbol or string keys).
+    # @return [self]
+    def set_default_segments(segments)
+      manager = @segments_manager
+      return self if manager.nil?
+
+      manager.put_segments(@visitor_id, deep_stringify(segments || {}))
+      self
+    rescue StandardError => e
+      @log_manager.error("Context#set_default_segments: #{e.class}: #{e.message}")
+      self
+    end
+
+    # Evaluate the named custom segments for this visitor and attach the matching
+    # segment ids (FR29; JS +runCustomSegments+, +context.ts:455-475+). For each
+    # key the {SegmentsManager} looks up the segment entity and evaluates its rules
+    # — via the Epic 2 {RuleManager} — against the visitor's properties (the
+    # context attributes deep-merged with the stored segments and the per-call
+    # +ruleData+, mirroring JS +getVisitorProperties+). Matching ids attach under
+    # +customSegments+ in +StoreData+. A surfaced {RuleError} sentinel is returned
+    # verbatim; otherwise +nil+ (JS returns the +RuleError+ union or +undefined+).
+    #
+    # NO lifecycle event fires on attachment (JS parity, F-014).
+    #
+    # Never raises into the host: a failure degrades to an +error+ log + +nil+ (NFR9).
+    #
+    # @param segment_keys [Array<String>] the segment keys to evaluate.
+    # @param attributes [Hash, nil] optional +{ruleData: {...}}+ visitor data the
+    #   segment rules match against (deep-stringified, merged over the context
+    #   attributes); +nil+ uses the context attributes alone.
+    # @return [Sentinel, nil] a propagated {RuleError}, or nil.
+    def run_custom_segments(segment_keys, attributes = nil)
+      manager = @segments_manager
+      return nil if manager.nil?
+
+      result = manager.select_custom_segments(@visitor_id, segment_keys, visitor_properties(attributes))
+      result.is_a?(Sentinel) ? result : nil
+    rescue StandardError => e
+      @log_manager.error("Context#run_custom_segments: #{e.class}: #{e.message}")
+      nil
+    end
+
     private
+
+    # Build the visitor properties the segment rules match against — JS
+    # +getVisitorProperties+ (+context.ts:569-577+): the stored segments deep-merged
+    # UNDER the context attributes deep-merged with the per-call +ruleData+. The
+    # per-call +ruleData+ (and context attributes) win over stored segments. All
+    # deep-stringified to string keys (the rule engine reads string keys).
+    def visitor_properties(attributes)
+      rule_data = attributes.is_a?(Hash) ? (attributes[:ruleData] || attributes["ruleData"]) : nil
+      empty = {} #: Hash[String, untyped]
+      merged = @attributes.merge(deep_stringify(rule_data || empty))
+      stored = get_visitor_data["segments"]
+      stored = empty unless stored.is_a?(Hash)
+      stored.merge(merged)
+    end
 
     # A frozen DISABLED {BucketedFeature} carrying the requested key — the miss /
     # internal-failure return for {#run_feature} (never an exception, AC#5).
