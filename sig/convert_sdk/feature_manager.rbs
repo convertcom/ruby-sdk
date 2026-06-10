@@ -1,0 +1,96 @@
+module ConvertSdk
+  # Feature resolution + typed-variable casting (Story 3.1). A MAPPING + CASTING
+  # layer over the Story 2.11 bucketing flow: a feature is ENABLED exactly when
+  # the visitor is bucketed into a variation carrying it (a fullStackFeature
+  # change whose data.feature_id matches a declared feature). cast_type mirrors
+  # the JS castType contract (types-utils.ts). Never re-evaluates rules.
+  class FeatureManager
+    FULLSTACK_FEATURE: String
+
+    JS_FALSEY: Array[untyped]
+
+    @data_manager: DataManager
+    @log_manager: LogManager?
+
+    def initialize: (
+      data_manager: DataManager,
+      ?log_manager: LogManager?
+    ) -> void
+
+    def run_feature: (
+      String visitor_id,
+      String feature_key,
+      ?Hash[Symbol, untyped] attributes
+    ) -> (BucketedFeature | Array[BucketedFeature])
+
+    def run_features: (
+      String visitor_id,
+      ?Hash[Symbol, untyped] attributes,
+      ?experiences: Array[String]?,
+      ?features: Array[String]?
+    ) -> Array[BucketedFeature]
+
+    def cast_type: (untyped value, String type) -> untyped
+
+    private
+
+    def bucketed_variations: (
+      String visitor_id,
+      Hash[Symbol, untyped] attributes,
+      Array[String]? experience_keys
+    ) -> Array[BucketedVariation]
+
+    def target_experiences: (Array[String]? experience_keys) -> Array[untyped]
+
+    def collect_enabled: (
+      Array[BucketedVariation] variations,
+      Hash[String, untyped] declared_by_id,
+      Array[String]? feature_keys
+    ) -> Array[BucketedFeature]
+
+    def feature_changes: (BucketedVariation variation) -> Array[untyped]
+
+    def enabled_feature_from_change: (
+      BucketedVariation variation,
+      Hash[String, untyped] change,
+      Hash[String, untyped] declared_by_id,
+      Array[String]? feature_keys
+    ) -> BucketedFeature?
+
+    def declared_for_change: (
+      untyped data,
+      Hash[String, untyped] declared_by_id
+    ) -> Hash[String, untyped]?
+
+    def filtered_out?: (Hash[String, untyped] declared, Array[String]? feature_keys) -> bool
+
+    def cast_variables: (Hash[String, untyped] declared, untyped raw) -> Hash[String, untyped]
+
+    def variable_type: (untyped definitions, untyped name) -> untyped
+
+    def build_enabled: (
+      BucketedVariation variation,
+      Hash[String, untyped] declared,
+      Hash[String, untyped] variables
+    ) -> BucketedFeature
+
+    def append_disabled: (
+      Array[BucketedFeature] bucketed,
+      Hash[String, untyped] declared_by_id
+    ) -> void
+
+    def disabled_from_declared: (Hash[String, untyped] declared) -> BucketedFeature
+
+    def disabled_feature: (key: untyped) -> BucketedFeature
+
+    def features_by_id: () -> Hash[String, untyped]
+
+    def cast_boolean: (untyped value) -> bool
+
+    def cast_integer: (untyped value) -> Integer
+
+    def cast_float: (untyped value) -> Float
+
+    def cast_json: (untyped value) -> untyped
+  end
+end
