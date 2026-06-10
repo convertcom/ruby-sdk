@@ -17,6 +17,7 @@ require_relative "convert_sdk/http_client"
 require_relative "convert_sdk/stores/memory_store"
 require_relative "convert_sdk/stores/redis_store"
 require_relative "convert_sdk/data_store_manager"
+require_relative "convert_sdk/event_manager"
 
 module ConvertSdk
   class Error < StandardError; end
