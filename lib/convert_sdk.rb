@@ -26,6 +26,8 @@ require_relative "convert_sdk/event_manager"
 require_relative "convert_sdk/fork_guard"
 require_relative "convert_sdk/background_timer"
 require_relative "convert_sdk/data_manager"
+require_relative "convert_sdk/visitors_queue"
+require_relative "convert_sdk/api_manager"
 require_relative "convert_sdk/experience_manager"
 require_relative "convert_sdk/feature_manager"
 require_relative "convert_sdk/segments_manager"
@@ -98,16 +100,27 @@ module ConvertSdk
     data_store_manager = DataStoreManager.new(log_manager: log_manager, store: store)
     event_manager = EventManager.new(log_manager: log_manager)
     data_manager = build_data_manager(config, log_manager, data_store_manager, clock)
+    api_manager = build_api_manager(config, log_manager, http_client, event_manager, data_manager)
 
     Client.new(
-      config: config,
-      log_manager: log_manager,
-      http_client: http_client,
-      data_store_manager: data_store_manager,
-      event_manager: event_manager,
-      data_manager: data_manager
+      config: config, log_manager: log_manager, http_client: http_client,
+      data_store_manager: data_store_manager, event_manager: event_manager,
+      data_manager: data_manager, api_manager: api_manager
     )
   end
+
+  # Build the outbound delivery surface (Story 4.1): the {ApiManager} owns the
+  # per-visitor event queue and the wire-payload builder. No thread is started
+  # here (NFR4 — the background flush timer lands in Story 4.2); construction is
+  # thread-free.
+  # @api private
+  def self.build_api_manager(config, log_manager, http_client, event_manager, data_manager)
+    ApiManager.new(
+      config: config, data_manager: data_manager, http_client: http_client,
+      event_manager: event_manager, log_manager: log_manager
+    )
+  end
+  private_class_method :build_api_manager
 
   # Build the {DataManager} wired with the Story 2.7 config-cache surface: the
   # cache lives under +convert_sdk.config.{sdkKey}+ (the DataManager writes

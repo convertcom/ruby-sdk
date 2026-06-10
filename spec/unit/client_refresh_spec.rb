@@ -260,12 +260,19 @@ RSpec.describe "ConvertSdk::Client config refresh (Story 2.7)" do
     clock = config_options.delete(:clock)
     config = ConvertSdk::Config.new(log_manager: log_manager, **config_options)
     dsm = ConvertSdk::DataStoreManager.new(log_manager: log_manager, store: store)
+    http_client = build_http_client(config, log_manager)
+    event_manager = ConvertSdk::EventManager.new(log_manager: log_manager)
+    data_manager = build_data_manager(config, sdk_key, dsm, log_manager, clock)
     ConvertSdk::Client.new(
       config: config, log_manager: log_manager,
-      http_client: build_http_client(config, log_manager),
+      http_client: http_client,
       data_store_manager: dsm,
-      event_manager: ConvertSdk::EventManager.new(log_manager: log_manager),
-      data_manager: build_data_manager(config, sdk_key, dsm, log_manager, clock)
+      event_manager: event_manager,
+      data_manager: data_manager,
+      api_manager: ConvertSdk::ApiManager.new(
+        config: config, data_manager: data_manager,
+        http_client: http_client, event_manager: event_manager, log_manager: log_manager
+      )
     )
   end
 

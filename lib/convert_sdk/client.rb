@@ -49,14 +49,17 @@ module ConvertSdk
     #   caching is Story 2.7 — in-memory install only here).
     # @param event_manager [EventManager] lifecycle pub/sub (fires +ready+).
     # @param data_manager [DataManager] holds the deep-frozen config snapshot.
+    # @param api_manager [ApiManager] the outbound event queue + delivery surface
+    #   (Story 4.1) — drives {#flush} and the bucketing-event enqueue seam.
     def initialize(config:, log_manager:, http_client:, data_store_manager:,
-                   event_manager:, data_manager:)
+                   event_manager:, data_manager:, api_manager:)
       @config = config
       @log_manager = log_manager
       @http_client = http_client
       @data_store_manager = data_store_manager
       @event_manager = event_manager
       @data_manager = data_manager
+      @api_manager = api_manager
       # The lazily-started config-refresh BackgroundTimer (Story 2.7). Created
       # here (interval bound, registered with ForkGuard) but NEVER started in the
       # factory — #ensure_refresh_timer! starts it on first decision-path use
@@ -79,6 +82,9 @@ module ConvertSdk
 
     # @return [DataManager] the config snapshot reader surface.
     attr_reader :data_manager
+
+    # @return [ApiManager] the outbound event queue + delivery surface (Story 4.1).
+    attr_reader :api_manager
 
     # Subscribe to a lifecycle event. Public API; delegates to {EventManager#on}
     # (which normalises {SystemEvents} constants and matching strings to one key
@@ -134,7 +140,8 @@ module ConvertSdk
         data_store_manager: @data_store_manager,
         event_manager: @event_manager,
         log_manager: @log_manager,
-        config: @config
+        config: @config,
+        api_manager: @api_manager
       )
     rescue StandardError => e
       @log_manager.error("Client#create_context: #{e.class}: #{e.message}")
@@ -167,6 +174,32 @@ module ConvertSdk
       @log_manager.error("Client#ensure_fresh_config!: #{e.class}: #{e.message}")
       self
     end
+
+    # Explicitly release the queued visitor events synchronously (FR40). THE
+    # single flush entry point — delegates to {ApiManager#release_queue}, which
+    # drains-and-swaps inside the queue lock and POSTs OUTSIDE it (the enqueue
+    # path is never blocked on network I/O). A failed POST is logged inside the
+    # ApiManager and never raised; the full failed-POST queue-retention behaviour
+    # lands in Story 4.2. An empty queue is a no-op.
+    #
+    # +release_queues+ is the frozen-name alias (FR40) and shares this exact path.
+    #
+    # NOTE (Story 4.4 seam): this is the single point where a ForkGuard PID check
+    # will gate the flush in a forked child — added here so all flush callers
+    # (explicit, at_exit, timer) inherit it from one place.
+    #
+    # Never raises into the host (NFR9 never-crash boundary).
+    #
+    # @param reason [String, nil] a human-readable release reason (logged).
+    # @return [self]
+    def flush(reason = nil)
+      @api_manager.release_queue(reason)
+      self
+    rescue StandardError => e
+      @log_manager.error("Client#flush: #{e.class}: #{e.message}")
+      self
+    end
+    alias release_queues flush
 
     private
 

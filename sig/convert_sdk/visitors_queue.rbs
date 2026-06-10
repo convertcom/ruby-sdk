@@ -1,0 +1,25 @@
+module ConvertSdk
+  # The per-visitor event queue — the in-memory buffer between the decision flow
+  # and ApiManager. Per-visitor merge (FR36), bounded at MAX_EVENTS (drop-oldest
+  # + warn), mutex-guarded drain-and-swap. @api private.
+  class VisitorsQueue
+    MAX_EVENTS: Integer
+
+    @log_manager: LogManager
+    @queue_mutex: Thread::Mutex
+    @items: Array[Hash[String, untyped]]
+    @size: Integer
+
+    def initialize: (log_manager: LogManager) -> void
+
+    def enqueue: (String visitor_id, Hash[String, untyped] event, ?segments: Hash[String, untyped]?) -> void
+
+    def drain!: () -> Array[Hash[String, untyped]]
+
+    def size: () -> Integer
+
+    private
+
+    def trim_to_cap: () -> void
+  end
+end
