@@ -8,6 +8,16 @@ AllCops:
   Exclude:
     - "bin/**/*"
     - "vendor/**/*"
+    # The demo Rails app (Story 5.2) is an APP, not the gem's lib — it lives
+    # under demo/ purely to exercise the SDK end-to-end under a real Puma cluster.
+    # It must NOT enter the gem's quality gates (RuboCop here, SimpleCov coverage,
+    # RBS/Steep typing): its Rails-idiomatic style, its smoke script, and its
+    # boot files follow different conventions and would pollute the gem's offense
+    # count and coverage %. The gemspec already excludes every demo/ path from the
+    # package; this keeps the LINT gate equally clean. (SimpleCov tracks only
+    # lib/ — see spec/spec_helper.rb — so the demo never enters coverage; RBS/Steep
+    # only check sig/ against lib/, never demo/.)
+    - "demo/**/*"
 
 # Every .rb file MUST start with the frozen-string-literal magic comment.
 Style/FrozenStringLiteralComment:
