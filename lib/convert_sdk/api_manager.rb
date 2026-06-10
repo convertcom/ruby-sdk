@@ -87,6 +87,14 @@ module ConvertSdk
         name: "flush"
       ) { flush_tick }
       ForkGuard.register_timer(@flush_timer)
+      # Story 4.4 — child queue-ownership clear. ForkGuard fires this callback in
+      # a forked child (after marking timers dead). The child inherits a COPY of
+      # the parent's queued events; clearing it here is what makes the child
+      # start EMPTY so it never double-delivers the parent's events (the parent's
+      # timer still runs there and delivers them). ForkGuard stays generic — it
+      # knows nothing about the queue; ApiManager owns its own clear (architecture
+      # Decision 6 callback-registry design).
+      ForkGuard.register_child_callback(-> { clear_queue_ownership })
     end
 
     # @return [VisitorsQueue] the underlying per-visitor event queue.
@@ -139,9 +147,35 @@ module ConvertSdk
     # @param reason [String, nil] a human-readable release reason (logged + fired).
     # @return [void]
     def release_queue(reason = nil)
+      # Story 4.4 — the SINGLE fork-safety PID boundary all three flush triggers
+      # (explicit flush, size, interval) inherit from one place. A cheap
+      # ForkGuard.forked? check (an integer PID comparison — Datadog idiom) covers
+      # the Process.daemon path that BYPASSES the _fork hook: a stale process
+      # re-arms (marks the inherited dead timers dead, clears the inherited queue,
+      # resets owner_pid) BEFORE proceeding. The check fires BEFORE the
+      # empty-queue early return so a freshly daemonised process re-arms its
+      # timers even when nothing is queued yet.
+      guard_fork_boundary
+
       visitors = @queue.drain!
       return if visitors.empty?
 
+      deliver(visitors, reason)
+    rescue StandardError => e
+      # Never-crash boundary: a delivery failure must not crash the host.
+      @log_manager.error("ApiManager#release_queue: #{e.class}: #{e.message}")
+    end
+
+    private
+
+    # POST the drained per-visitor entries and branch on the result. On SUCCESS:
+    # an +info+ line + the {SystemEvents::API_QUEUE_RELEASED} lifecycle event. On
+    # FAILURE: re-enqueue the drained visitors (preserving the per-visitor merge)
+    # and +warn+ — NO event fires (frozen Ruby divergence from JS, which DOES fire
+    # on failure — api-manager.ts:247). There is NO inline retry; the next timer
+    # tick / size trigger retries (the bounded queue keeps a sustained outage from
+    # growing host memory — NFR10). Caller wraps this in the never-crash rescue.
+    def deliver(visitors, reason)
       response = post_payload(build_payload(visitors))
       if response.success?
         @log_manager.info(
@@ -152,22 +186,40 @@ module ConvertSdk
           { "reason" => reason, "visitors" => visitors.size }
         )
       else
-        # Failure retention (AC#3): re-enqueue the drained visitors, preserving the
-        # per-visitor merge, and warn. No event fires on failure (frozen Ruby
-        # divergence from JS, which DOES fire on failure — api-manager.ts:247).
-        # The timer loop re-arms automatically; the next tick/size trigger retries.
         @queue.requeue(visitors)
         @log_manager.warn(
           "ApiManager#release_queue: delivery failed, retaining #{count_events(visitors)} events " \
           "(status #{response.status}), reason=#{reason}"
         )
       end
-    rescue StandardError => e
-      # Never-crash boundary: a delivery failure must not crash the host.
-      @log_manager.error("ApiManager#release_queue: #{e.class}: #{e.message}")
     end
 
-    private
+    # Story 4.4 — the PID-guarded fork boundary. When +ForkGuard.forked?+ is true
+    # (a +Process.daemon+ spawn bypassed the +_fork+ hook so owner_pid is stale),
+    # run the shared re-arm path before any delivery: it marks both registered
+    # timers dead, fires the child-callbacks (this manager's queue-ownership
+    # clear), and resets owner_pid — leaving the process behaving like a fresh
+    # child. A free no-op in the owning process and on JRuby (forked? is always
+    # false there).
+    def guard_fork_boundary
+      return unless ForkGuard.forked?
+
+      @log_manager.debug(
+        "ApiManager#release_queue: stale process detected (fork/daemon bypass), re-arming"
+      )
+      ForkGuard.rearm!
+    end
+
+    # The registered ForkGuard child-callback (Story 4.4): clear this manager's
+    # inherited queue so a forked child starts EMPTY and never double-delivers
+    # the parent's events. ForkGuard fires this in the child after marking timers
+    # dead. Never-crash: a raising callback must not break the fork hook.
+    def clear_queue_ownership
+      @queue.clear
+      @log_manager.debug("ApiManager#clear_queue_ownership: cleared inherited queue ownership in child")
+    rescue StandardError => e
+      @log_manager.error("ApiManager#clear_queue_ownership: #{e.class}: #{e.message}")
+    end
 
     # Lazily start the flush BackgroundTimer (NFR4 — never in the factory). Called
     # on the first (and every) enqueue; idempotent and re-arms transparently after
