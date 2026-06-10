@@ -43,11 +43,11 @@ RSpec.describe "Live config fetch schema (Story 5.1 AC#2)", :staging do
 
   # Build a live fetch-mode client against the staging project. Timer-off
   # (data_refresh_interval: nil) so no background thread spawns; the secret
-  # variant is attached only when the with-secret env var is present.
+  # is attached only when the with-secret variant's credentials include one.
   let(:client) do
-    opts = { sdk_key: staging_sdk_key, data_refresh_interval: nil }
-    secret = staging_sdk_key_secret
-    opts[:sdk_key_secret] = secret if secret
+    creds = staging_credentials
+    opts = { sdk_key: creds[:sdk_key], data_refresh_interval: nil }
+    opts[:sdk_key_secret] = creds[:sdk_key_secret] if creds[:sdk_key_secret]
     ConvertSdk.create(**opts)
   end
 
