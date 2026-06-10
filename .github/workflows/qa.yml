@@ -107,8 +107,13 @@ jobs:
     #
     # Excludes the :typecheck group (rbs/steep) — parity needs neither, and the
     # group is isolated precisely so jobs can opt out of the C-extension build.
+    # DISABLE_COVERAGE: this job runs only spec/cross_sdk (the hashing gate) and
+    # is independent of coverage — coverage is enforced by the full-suite `test`
+    # job. Opting out stops the global 85% line gate from being applied to this
+    # deliberately-narrow subset (see spec/spec_helper.rb).
     env:
       BUNDLE_WITHOUT: typecheck
+      DISABLE_COVERAGE: "1"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Ruby
