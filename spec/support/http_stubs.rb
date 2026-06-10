@@ -151,6 +151,26 @@ module HttpStubs
     }
   end
 
+  # A wire-shaped conversion event (string-keyed camelCase) — the Story 4.3 golden
+  # event shape, lifted here so the 4.7 full-chain gate composes the SAME builder
+  # (one source of golden truth, no drift). +goal_data+ is an ordered Hash of wire
+  # keys to values, emitted as the +[{key,value}]+ pair array (DataManager#convert's
+  # wire shape). +bucketing_data+ (+{experienceId => variationId}+) is included only
+  # when non-empty (JS parity — omitted for an unbucketed visitor). Both sub-keys
+  # are omitted when empty so the helper matches the builder's "only-when-present"
+  # contract exactly.
+  #
+  # @param goal_id [String]
+  # @param goal_data [Hash{String=>Object}] ordered wire-key => value pairs.
+  # @param bucketing_data [Hash{String=>String}] experienceId => variationId.
+  # @return [Hash{String=>Object}]
+  def conversion_event(goal_id:, goal_data: {}, bucketing_data: {})
+    data = { "goalId" => goal_id } #: Hash[String, untyped]
+    data["goalData"] = goal_data.map { |k, v| { "key" => k, "value" => v } } unless goal_data.empty?
+    data["bucketingData"] = bucketing_data unless bucketing_data.empty?
+    { "eventType" => "conversion", "data" => data }
+  end
+
   # Standard JSON response headers.
   def json_headers
     { "Content-Type" => "application/json" }
