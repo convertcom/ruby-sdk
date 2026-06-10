@@ -118,6 +118,13 @@ jobs:
         with:
           ruby-version: "3.4"
           bundler-cache: true
+      - name: Enforce generated-file header (RBS types)
+        # PR-blocking guard (qs-03 / B5). Mirrors android-sdk ci.yml:51.
+        # Every .rbs under sig/convert_sdk/config/generated/ must start with
+        # the AUTO-GENERATED marker. Files that lack it are either hand-edited
+        # or mistakenly added — both cases block the PR. Regenerate via the
+        # backend serving workflow; never hand-edit generated files.
+        run: bash scripts/check-generated-rbs-header.sh
       - name: rbs validate
         # `-r` loads the stdlib library RBS that the signatures reference (kept in
         # sync with the Steepfile's `library` declarations). Without these, the
