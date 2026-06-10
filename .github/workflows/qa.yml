@@ -44,6 +44,30 @@ jobs:
           bundler-cache: true
       - name: RuboCop
         run: bundle exec rubocop
+      - name: Docs — broken relative-link check
+        # A STEP in the existing lint job (NOT a new required check) so the PR
+        # check count stays put. Extracts every Markdown link in README /
+        # CONTRIBUTING / docs/, skips http(s)/mailto and pure-anchor links,
+        # strips the #fragment, and asserts each relative target exists
+        # (resolved against the linking file's directory). Fails the build on the
+        # first broken link.
+        run: |
+          status=0
+          while IFS= read -r src; do
+            while IFS= read -r link; do
+              case "$link" in
+                http://*|https://*|mailto:*) continue ;;
+              esac
+              target="${link%%#*}"
+              [ -z "$target" ] && continue
+              resolved="$(dirname "$src")/$target"
+              if [ ! -e "$resolved" ]; then
+                echo "::error file=$src::Broken relative link: $link (resolved: $resolved)"
+                status=1
+              fi
+            done < <(grep -oE '\]\([^)]+\)' "$src" | sed -E 's/^\]\(//; s/\)$//')
+          done < <(find docs README.md CONTRIBUTING.md -name '*.md')
+          exit $status
 
   typecheck:
     name: Typecheck (RBS + Steep)
