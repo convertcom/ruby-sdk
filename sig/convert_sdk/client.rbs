@@ -8,6 +8,9 @@ module ConvertSdk
     @event_manager: EventManager
     @data_manager: DataManager
     @api_manager: ApiManager
+    @experience_manager: ExperienceManager?
+    @feature_manager: FeatureManager?
+    @segments_manager: SegmentsManager?
     @refresh_timer: BackgroundTimer
     @at_exit_pid: Integer
 
@@ -22,7 +25,10 @@ module ConvertSdk
       data_store_manager: DataStoreManager,
       event_manager: EventManager,
       data_manager: DataManager,
-      api_manager: ApiManager
+      api_manager: ApiManager,
+      ?experience_manager: ExperienceManager?,
+      ?feature_manager: FeatureManager?,
+      ?segments_manager: SegmentsManager?
     ) -> void
 
     def on: (untyped event) ?{ (untyped payload, untyped err) -> void } -> self
@@ -42,6 +48,8 @@ module ConvertSdk
     def postfork: () -> self
 
     private
+
+    def build_context: (String visitor_id, Hash[untyped, untyped]? attributes) -> Context
 
     def register_at_exit_flush: () -> void
 
