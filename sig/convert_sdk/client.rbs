@@ -9,6 +9,7 @@ module ConvertSdk
     @data_manager: DataManager
     @api_manager: ApiManager
     @refresh_timer: BackgroundTimer
+    @at_exit_pid: Integer
 
     attr_reader config: Config
     attr_reader data_manager: DataManager
@@ -38,7 +39,13 @@ module ConvertSdk
 
     alias release_queues flush
 
+    def postfork: () -> self
+
     private
+
+    def register_at_exit_flush: () -> void
+
+    def run_at_exit_flush: () -> void
 
     def build_refresh_timer: () -> BackgroundTimer
 

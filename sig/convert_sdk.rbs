@@ -6,6 +6,14 @@ module ConvertSdk
   class Error < StandardError
   end
 
+  self.@at_exit_registration_enabled: bool
+
+  # Whether Client registers its PID-guarded at_exit flush (Story 4.4 AC#5).
+  # Always true in production; the test harness alone flips it off.
+  def self.at_exit_registration_enabled?: () -> bool
+
+  def self.at_exit_registration_enabled=: (bool value) -> bool
+
   # Build an SDK client from an SDK key (fetch) or a pre-fetched data object.
   def self.create: (?sdk_key: String?, ?data: Hash[untyped, untyped]?, ?store: untyped?, ?clock: (^() -> Float)?, **untyped options) -> Client
 
