@@ -1,0 +1,60 @@
+# Story 5.1 — the live-platform staging suite (FR65 / NFR5).
+#
+# A SEPARATE workflow from qa.yml (Quality Checks): the :staging suite hits the
+# real platform over the network and needs the CONVERT_SDK_KEY repository
+# secrets, so it must NEVER run in PR CI (no flakiness, no secret exposure to
+# fork PRs). It runs only on a daily SCHEDULE and on manual DISPATCH, surfacing
+# platform schema drift on a cadence instead of in a customer integration.
+#
+# qa.yml is intentionally untouched — staging is its own workflow.
+name: Staging (live platform)
+
+on:
+  schedule:
+    # Daily at 06:17 UTC — an off-peak, non-round minute (avoids the top-of-hour
+    # GitHub-scheduler congestion that delays cron jobs).
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  staging:
+    name: ":staging suite (${{ matrix.variant }})"
+    runs-on: ubuntu-latest
+    # The :staging suite at TRACE proves zero secret leakage live (NFR5). The
+    # with-secret variant authenticates Bearer-style; the without-secret variant
+    # exercises the no-secret auth path the staging project also supports. Both
+    # run the same suite — fail-fast off so one variant's result never masks the
+    # other's drift signal.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: with-secret
+            with_secret: true
+          - variant: without-secret
+            with_secret: false
+    env:
+      # The live SDK key (both variants authenticate config + track with it). The
+      # secret is conditionally injected below so the without-secret variant runs
+      # with CONVERT_SDK_KEY_SECRET unset (the no-secret platform auth path).
+      CONVERT_SDK_KEY: ${{ secrets.CONVERT_SDK_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        # One CRuby (3.4 — latest stable, matching qa.yml's single-Ruby jobs).
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: Inject the SDK key secret (with-secret variant only)
+        if: matrix.with_secret
+        run: echo "CONVERT_SDK_KEY_SECRET=${{ secrets.CONVERT_SDK_KEY_SECRET }}" >> "$GITHUB_ENV"
+      - name: RSpec (:staging suite, TRACE zero-leakage scan)
+        # --tag staging opts INTO the suite that the default run excludes. The
+        # specs run the SDK at LogLevel::TRACE with a CapturingSink and assert no
+        # raw secret reaches the logs (Redactor verified live, NFR5) — the scan
+        # lives in-suite (secret in memory), never grepping CI logs for a secret.
+        run: bundle exec rspec --tag staging

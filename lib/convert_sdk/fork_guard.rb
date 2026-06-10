@@ -97,6 +97,22 @@ module ConvertSdk
         callbacks.each(&:call)
       end
 
+      # Test-only reap that STOPS (signals exit + joins) every registered timer
+      # so NO BackgroundTimer thread can survive into the next example. Distinct
+      # from {.reset_for_tests!}, which only clears the registry (it leaves any
+      # live thread running). A leaked flush/refresh timer thread firing a real
+      # POST/GET after its example ends pollutes a later example's zero-HTTP
+      # assertion under WebMock (intermittent on JRuby's thread scheduling) — a
+      # global +after(:each)+ reap closes that window deterministically. Iterates
+      # a SNAPSHOT taken under the registry mutex; +#stop+ is idempotent so this
+      # is a cheap no-op for already-stopped timers.
+      # @api private
+      # @return [void]
+      def stop_all_timers!
+        timers = @registry_mutex.synchronize { @timers.dup }
+        timers.each(&:stop)
+      end
+
       # Test-only reset so the singleton-state module is order-independent under
       # RSpec. Clears registries, resets owner_pid, drops the logger. Does NOT
       # uninstall the prepend (it is harmless and global).
