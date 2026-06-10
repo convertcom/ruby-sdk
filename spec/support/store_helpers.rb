@@ -31,3 +31,28 @@ RSpec.shared_examples "a convert store" do
     expect(store.get("k")).to eq("second")
   end
 end
+
+# Hand-rolled, in-memory fake of the tiny subset of the +redis-rb+ client API that
+# {ConvertSdk::Stores::RedisStore} consumes — +#get(key)+ and +#set(key, value)+.
+#
+# We deliberately avoid +fakeredis+/+mock_redis+ and a live Redis: the unit suite
+# MUST pass with the +redis+ gem NOT installed (the zero-gemspec-footprint litmus
+# test for Story 2.2). This double models the real client's contract: values are
+# stored and returned as raw strings, and a missing key reads as +nil+. It lives
+# here (shared, not copy-pasted into the spec) so future store specs can reuse it.
+class FakeRedis
+  def initialize
+    @data = {}
+  end
+
+  # Mirror +Redis#get+: returns the stored string, or +nil+ when the key is absent.
+  def get(key)
+    @data[key]
+  end
+
+  # Mirror +Redis#set+: stores +value+ (a string) and returns redis-rb's +"OK"+.
+  def set(key, value)
+    @data[key] = value
+    "OK"
+  end
+end
