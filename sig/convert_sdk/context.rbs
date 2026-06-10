@@ -13,6 +13,7 @@ module ConvertSdk
     @attributes: Hash[String, untyped]
     @experience_manager: ExperienceManager?
     @feature_manager: FeatureManager?
+    @segments_manager: SegmentsManager?
 
     attr_reader visitor_id: String
     attr_reader attributes: Hash[String, untyped]
@@ -26,7 +27,8 @@ module ConvertSdk
       config: Config,
       ?attributes: Hash[untyped, untyped]?,
       ?experience_manager: ExperienceManager?,
-      ?feature_manager: FeatureManager?
+      ?feature_manager: FeatureManager?,
+      ?segments_manager: SegmentsManager?
     ) -> void
 
     def update_visitor_properties: (Hash[untyped, untyped]? properties) -> self
@@ -43,7 +45,13 @@ module ConvertSdk
 
     def run_features: (?Hash[untyped, untyped]? attributes) -> Array[BucketedFeature]
 
+    def set_default_segments: (Hash[untyped, untyped]? segments) -> self
+
+    def run_custom_segments: (Array[String] segment_keys, ?Hash[untyped, untyped]? attributes) -> Sentinel?
+
     private
+
+    def visitor_properties: (Hash[untyped, untyped]? attributes) -> Hash[String, untyped]
 
     def disabled_feature: (String key) -> BucketedFeature
 
