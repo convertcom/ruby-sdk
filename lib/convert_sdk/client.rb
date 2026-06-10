@@ -35,12 +35,16 @@ module ConvertSdk
   # touches the network library directly or builds wire headers beyond passing
   # the Bearer header VALUE through the port.
   #
-  # == Forward surface (deliberately minimal)
+  # == Decisioning surface (fully wired)
   #
-  # {#create_context} is a stub here — the full Context decisioning lands in
-  # Story 2.8. No background threads are started by the Client or the factory
-  # (NFR4 lazy start); the refresh timer (Story 2.7), flush/fork/at_exit (Epic 4)
-  # wiring lands in those stories. Constructor injection throughout — no globals.
+  # {#create_context} injects the per-context decisioning managers
+  # ({ExperienceManager}, {FeatureManager}, {SegmentsManager}) and the outbound
+  # {ApiManager} into each {Context}, so a context returned by a factory-built
+  # client decides through the real Story 2.9–3.2 machinery and enqueues bucketing
+  # / conversion events for delivery. No background threads are started by the
+  # Client or the factory (NFR4 lazy start); the refresh timer (Story 2.7),
+  # flush/fork/at_exit (Epic 4) wiring is lazy. Constructor injection throughout —
+  # no globals.
   class Client
     # @param config [Config] the validated configuration surface.
     # @param log_manager [LogManager] shared logging surface (secrets armed).
@@ -51,8 +55,17 @@ module ConvertSdk
     # @param data_manager [DataManager] holds the deep-frozen config snapshot.
     # @param api_manager [ApiManager] the outbound event queue + delivery surface
     #   (Story 4.1) — drives {#flush} and the bucketing-event enqueue seam.
+    # @param experience_manager [ExperienceManager, nil] the variation-selection
+    #   surface (Story 2.11) injected into every {Context}. nil leaves contexts
+    #   decisioning-less (the never-crash unit harness builds clients without it).
+    # @param feature_manager [FeatureManager, nil] the feature-resolution surface
+    #   (Story 3.1) injected into every {Context}. nil leaves features miss-only.
+    # @param segments_manager [SegmentsManager, nil] the visitor-segmentation
+    #   surface (Story 3.2) injected into every {Context}. nil leaves segmentation
+    #   inert.
     def initialize(config:, log_manager:, http_client:, data_store_manager:,
-                   event_manager:, data_manager:, api_manager:)
+                   event_manager:, data_manager:, api_manager:,
+                   experience_manager: nil, feature_manager: nil, segments_manager: nil)
       @config = config
       @log_manager = log_manager
       @http_client = http_client
@@ -60,6 +73,9 @@ module ConvertSdk
       @event_manager = event_manager
       @data_manager = data_manager
       @api_manager = api_manager
+      @experience_manager = experience_manager
+      @feature_manager = feature_manager
+      @segments_manager = segments_manager
       # The lazily-started config-refresh BackgroundTimer (Story 2.7). Created
       # here (interval bound, registered with ForkGuard) but NEVER started in the
       # factory — #ensure_refresh_timer! starts it on first decision-path use
@@ -139,16 +155,7 @@ module ConvertSdk
 
       # Context creation is "first use" — lazily arm the background refresh timer.
       ensure_refresh_timer!
-      Context.new(
-        visitor_id: visitor_id,
-        attributes: attributes,
-        data_manager: @data_manager,
-        data_store_manager: @data_store_manager,
-        event_manager: @event_manager,
-        log_manager: @log_manager,
-        config: @config,
-        api_manager: @api_manager
-      )
+      build_context(visitor_id, attributes)
     rescue StandardError => e
       @log_manager.error("Client#create_context: #{e.class}: #{e.message}")
       nil
@@ -231,6 +238,26 @@ module ConvertSdk
     end
 
     private
+
+    # Build a fully-wired {Context} for +visitor_id+: the shared config/store/event/
+    # log surfaces plus the per-context decisioning managers (Story 2.11 / 3.1 / 3.2)
+    # and the outbound {ApiManager} (Story 4.1). A nil decisioning manager leaves
+    # the corresponding Context method inert (the never-crash unit harness path).
+    def build_context(visitor_id, attributes)
+      Context.new(
+        visitor_id: visitor_id,
+        attributes: attributes,
+        data_manager: @data_manager,
+        data_store_manager: @data_store_manager,
+        event_manager: @event_manager,
+        log_manager: @log_manager,
+        config: @config,
+        experience_manager: @experience_manager,
+        feature_manager: @feature_manager,
+        segments_manager: @segments_manager,
+        api_manager: @api_manager
+      )
+    end
 
     # Story 4.4 AC#5 — capture the registering PID and register the gem's single
     # at_exit handler (the Split-gem ROOT_PROCESS_ID pattern). Skipped under the
