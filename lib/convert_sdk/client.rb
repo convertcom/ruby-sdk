@@ -101,12 +101,43 @@ module ConvertSdk
       @data_manager.config_available?
     end
 
-    # Create a decisioning Context. STUB — the full implementation (visitor
-    # resolution, bucketing, rule evaluation) lands in Story 2.8. Exposed now so
-    # the public surface compiles; returns +nil+ until 2.8.
+    # Create a per-visitor decisioning {Context} — the object an integrator holds
+    # for the lifetime of one request/job.
     #
-    # @return [nil]
-    def create_context(*)
+    # The +visitor_id+ is validated for presence (blank/nil → an +error+ log line
+    # + +nil+ return, NOT an +ArgumentError+: validation here is request-time, and
+    # the never-crash contract forbids raising into the host on a per-request call;
+    # only {ConvertSdk.create}'s config-time misconfiguration raises). Creation is
+    # the SDK's "first use" trigger, so it fires the lazy-start refresh-timer hook
+    # ({#ensure_refresh_timer!}, NFR4) — no threads start before the first context.
+    #
+    # Each call returns a NEW, independent {Context} (no caching, no shared mutable
+    # in-memory visitor state across instances — FR12); contexts for the same
+    # visitor share only the store-backed {StoreData} (stickiness). Attributes are
+    # deep-stringified at the {Context} boundary.
+    #
+    # @param visitor_id [String] the visitor id (must be non-blank).
+    # @param attributes [Hash, nil] optional per-visitor attributes.
+    # @return [Context, nil] the new Context, or nil for a blank visitor id.
+    def create_context(visitor_id = nil, attributes = nil)
+      if visitor_id.nil? || (visitor_id.respond_to?(:strip) && visitor_id.strip.empty?)
+        @log_manager.error("Client#create_context: blank visitor_id; returning nil")
+        return nil
+      end
+
+      # Context creation is "first use" — lazily arm the background refresh timer.
+      ensure_refresh_timer!
+      Context.new(
+        visitor_id: visitor_id,
+        attributes: attributes,
+        data_manager: @data_manager,
+        data_store_manager: @data_store_manager,
+        event_manager: @event_manager,
+        log_manager: @log_manager,
+        config: @config
+      )
+    rescue StandardError => e
+      @log_manager.error("Client#create_context: #{e.class}: #{e.message}")
       nil
     end
 

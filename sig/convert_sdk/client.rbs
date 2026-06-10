@@ -25,7 +25,7 @@ module ConvertSdk
 
     def config_available?: () -> bool
 
-    def create_context: (*untyped) -> nil
+    def create_context: (?String? visitor_id, ?Hash[untyped, untyped]? attributes) -> Context?
 
     def ensure_refresh_timer!: () -> self
 
