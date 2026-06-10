@@ -1,0 +1,191 @@
+plugins:
+  - rubocop-performance
+
+AllCops:
+  TargetRubyVersion: 3.1
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - "bin/**/*"
+    - "vendor/**/*"
+    # RBS signature files are not Ruby; exclude from all cops.
+    - "**/*.rbs"
+    # The demo Rails app (Story 5.2) is an APP, not the gem's lib — it lives
+    # under demo/ purely to exercise the SDK end-to-end under a real Puma cluster.
+    # It must NOT enter the gem's quality gates (RuboCop here, SimpleCov coverage,
+    # RBS/Steep typing): its Rails-idiomatic style, its smoke script, and its
+    # boot files follow different conventions and would pollute the gem's offense
+    # count and coverage %. The gemspec already excludes every demo/ path from the
+    # package; this keeps the LINT gate equally clean. (SimpleCov tracks only
+    # lib/ — see spec/spec_helper.rb — so the demo never enters coverage; RBS/Steep
+    # only check sig/ against lib/, never demo/.)
+    - "demo/**/*"
+
+# Every .rb file MUST start with the frozen-string-literal magic comment.
+Style/FrozenStringLiteralComment:
+  Enabled: true
+  EnforcedStyle: always
+
+Style/StringLiterals:
+  Enabled: true
+  EnforcedStyle: double_quotes
+
+Style/StringLiteralsInInterpolation:
+  Enabled: true
+  EnforcedStyle: double_quotes
+
+Layout/LineLength:
+  Max: 120
+
+# RBS inline type annotations (`#: Type`) are deliberately written without a
+# space after `#` — that exact form is what Steep parses. The hardened HTTP
+# port (Story 1.5) uses them to type empty-literal seams (`{} #: Hash[...]`)
+# at the single Net::HTTP site. Allow the RBS-inline form for this cop.
+Layout/LeadingCommentSpace:
+  AllowRBSInlineAnnotation: true
+
+# Specs use long descriptive blocks; the default 25-line block limit is noise
+# for RSpec example groups and the SimpleCov config block in spec_helper.
+Metrics/BlockLength:
+  Exclude:
+    - "spec/**/*"
+    - "*.gemspec"
+    - "Rakefile"
+    - "spec/spec_helper.rb"
+
+Metrics/MethodLength:
+  Max: 20
+
+# The Client and DataManager are the two files Story 2.7's config-caching /
+# background-refresh / lazy-TTL feature extends — the architecture mandates "no
+# new lib files" for that story (refresh logic in the Client, snapshot + TTL
+# bookkeeping in the DataManager), so the cohesive feature surface lands inside
+# these two existing classes rather than being split across new files. The
+# resulting length is a deliberate architecture decision, not unmanaged growth.
+# RuleManager (Story 2.10) is added on the same principle: the OR->AND->OR_WHEN
+# walk levels + leaf evaluation + validation are one cohesive unit mirroring the
+# JS rule-manager.ts class — length is the walk surface, not unmanaged growth.
+# Context (Story 2.11) joins for the same reason: the per-visitor public API
+# (create/attributes/lookups from 2.8 + run_experience(s) decision entry points)
+# is one cohesive surface mirroring the JS context.ts class — the orchestration
+# itself lives in DataManager/ExperienceManager, Context just wires the entry
+# points, fires the lifecycle event, and holds the never-crash boundary.
+Metrics/ClassLength:
+  Exclude:
+    - "lib/convert_sdk/client.rb"
+    - "lib/convert_sdk/data_manager.rb"
+    - "lib/convert_sdk/rule_manager.rb"
+    - "lib/convert_sdk/context.rb"
+    # FeatureManager (Story 3.1) ports feature-manager.ts (the run_feature /
+    # run_features resolution surface) PLUS the castType truth table
+    # (types-utils.ts). The two cohesive JS modules it mirrors are the unit; the
+    # length reflects the ported reference surface, not unmanaged growth (same
+    # rationale as the DataManager/RuleManager feature surfaces above).
+    - "lib/convert_sdk/feature_manager.rb"
+
+# The Client (Story 2.5) is wired by explicit constructor injection of its six
+# collaborator managers (config, log, http, data-store, event, data) — the
+# architecture mandates constructor injection throughout with no globals or
+# singletons, so each dependency is a named keyword argument rather than being
+# hidden inside an options bag. The Context (Story 2.8) follows the same
+# injection contract and adds the two per-visitor values it binds (visitor_id +
+# attributes) on top of its five injected managers. Story 2.11 grows the
+# injection surface again: the DataManager gains its decision-flow collaborators
+# (bucketing_manager, rule_manager, account/project resolvers) and the Context
+# gains the experience_manager. Because every one of these is a NAMED keyword
+# argument (self-documenting at the call site — the readability problem the cop
+# guards against applies to positional lists, not keyword injection), keyword
+# args are excluded from the count; the positional limit stays at 7.
+Metrics/ParameterLists:
+  Max: 7
+  CountKeywordArgs: false
+
+# get_visitor_data / get_config_entity (Story 2.8) are FROZEN public-API parity
+# names mirroring the JS SDK surface (getVisitorData/getConfigEntity,
+# context.ts:495,549). The get_ prefix is mandated by the cross-SDK naming
+# contract, not an accessor-naming slip, so the cop is disabled for the Context.
+Naming/AccessorMethodName:
+  Exclude:
+    - "lib/convert_sdk/context.rb"
+
+# MurmurHash3 uses the canonical algorithm variable names from Austin Appleby's
+# reference implementation (h1 = hash state, k1 = block key). Renaming them would
+# break the line-by-line auditability of the vendored implementation against the
+# reference, so they are explicitly allowed as method parameter names.
+Naming/MethodParameterName:
+  AllowedNames:
+    - h1
+    - k1
+
+# The 13 rule operators (Story 2.10) port the JS SDK comparisons.ts signatures
+# verbatim: each takes a trailing positional `negation` boolean so RuleManager
+# can dispatch uniformly across all operators (processor[matching](value, rule
+# value, negation), mirroring rule-manager.ts:299-319). Keyword-izing it would
+# break the uniform positional dispatch and diverge from the JS contract.
+Style/OptionalBooleanParameter:
+  Exclude:
+    - "lib/convert_sdk/comparisons.rb"
+
+# is_in / does_not_exist are the snake_case mirrors of the FROZEN wire operator
+# names isIn / doesNotExist (the two-worlds rule for operator dispatch — the
+# dispatch-map keys stay byte-identical to the rule JSON match_type, the Ruby
+# methods underneath are snake_case). is_rule_matched (RuleManager, Story 2.10)
+# is the snake_case mirror of the FROZEN cross-SDK public API name isRuleMatched
+# (rule-manager.ts:99). The predicate-prefix cop would force in?/not_exist?/
+# rule_matched?, breaking those naming contracts.
+Naming/PredicatePrefix:
+  Exclude:
+    - "lib/convert_sdk/comparisons.rb"
+    - "lib/convert_sdk/rule_manager.rb"
+
+# custom_dimension_1 .. custom_dimension_5 (Story 4.3) are the snake_case mirrors
+# of the FROZEN wire goal-data keys customDimension1 .. customDimension5
+# (the two-worlds rule — the public track_conversion goal_data: kwarg surface is
+# snake_case symbols, the wire identifiers stay camelCase via GoalDataKey). The
+# trailing digit is part of the cross-SDK key name, not a variable-numbering
+# slip; normalcasing them to custom_dimension1 would break the public contract
+# and the snake↔camel mapping. Allowed as identifiers for this cop.
+Naming/VariableNumber:
+  AllowedIdentifiers:
+    - custom_dimension_1
+    - custom_dimension_2
+    - custom_dimension_3
+    - custom_dimension_4
+    - custom_dimension_5
+
+# cast_boolean is one branch of the symmetric cast_* helper family (cast_boolean
+# / cast_integer / cast_float / cast_json) that mirrors the JS castType switch
+# (types-utils.ts:13-54) one-to-one. Only the boolean branch happens to return a
+# bool; renaming it cast_boolean? would break the deliberate one-name-per-cast-
+# branch symmetry (the others return Integer/Float/parsed-JSON, not predicates).
+Naming/PredicateMethod:
+  Exclude:
+    - "lib/convert_sdk/feature_manager.rb"
+
+# Comparisons is a cohesive 13-operator + numeric-helper module; the operator
+# set is the unit, not unmanaged growth. (Mirrors the ClassLength rationale for
+# the Client/DataManager feature surfaces.)
+Metrics/ModuleLength:
+  Exclude:
+    - "lib/convert_sdk/comparisons.rb"
+
+# The frozen value objects (BucketedVariation, BucketedFeature) are declared as
+# explicit `class X < Struct.new(...)` subclasses. This is the form the
+# architecture mandates ("frozen Struct subclass") AND the only form Steep can
+# statically resolve: methods defined in a `Struct.new(...) do ... end` block are
+# mis-attributed by Steep to the enclosing module (Ruby::UndeclaredMethodDefinition),
+# whereas the subclass form attributes #error?/#initialize to the class as the RBS
+# declares. The Style/StructInheritance preference is overridden here for that reason.
+Style/StructInheritance:
+  Exclude:
+    - "lib/convert_sdk/bucketed_variation.rb"
+    - "lib/convert_sdk/bucketed_feature.rb"
+    - "lib/convert_sdk/http_client.rb"
+
+# The steep/ directory holds the build-time config-contract probe (qs-03). The
+# probe re-opens `module ConvertSdk` as a CI-only utility file (OUTSIDE lib/,
+# never required at runtime). The module is already documented in lib/
+# convert_sdk.rb; the probe re-opening does not warrant a second top-level doc.
+Style/Documentation:
+  Exclude:
+    - "steep/**/*"

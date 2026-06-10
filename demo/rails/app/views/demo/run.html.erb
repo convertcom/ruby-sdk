@@ -1,0 +1,103 @@
+<%#
+  Bare semantic-HTML render of one full SDK loop. Every value the SDK decided is
+  in a labelled element keyed by an id/data attribute so a human can read it and a
+  request spec / curl can assert on it. No CSS, no JS, no asset pipeline — the DOM
+  IS the verification surface. The identical data is available as JSON via
+  `Accept: application/json` (see DemoController#run).
+%>
+<main>
+  <h1>Convert Ruby SDK — full-loop demo</h1>
+
+  <section id="request">
+    <h2>Request</h2>
+    <dl>
+      <dt>Mode</dt>
+      <dd id="mode"><%= @summary[:mode] %></dd>
+      <dt>Worker PID</dt>
+      <dd id="pid"><%= @summary[:pid] %></dd>
+      <dt>Visitor id</dt>
+      <dd id="visitor-id"><%= @summary[:visitor_id] %></dd>
+      <dt>Visitor attributes</dt>
+      <dd id="attributes">
+        <ul>
+          <% @summary[:attributes].each do |attr_key, attr_value| %>
+            <li><%= attr_key %> = <%= attr_value %></li>
+          <% end %>
+        </ul>
+      </dd>
+    </dl>
+  </section>
+
+  <section id="experience">
+    <h2>Experience — run_experience</h2>
+    <% experience = @summary[:experience] %>
+    <% if experience[:bucketed] %>
+      <p id="experience-decided">DECIDED</p>
+      <dl>
+        <dt>Experience id</dt>
+        <dd id="experience-id"><%= experience[:experience_id] %></dd>
+        <dt>Variation id</dt>
+        <dd id="variation-id"><%= experience[:variation_id] %></dd>
+        <dt>Variation key</dt>
+        <dd id="variation-key"><%= experience[:variation_key] %></dd>
+      </dl>
+    <% else %>
+      <p id="experience-decided">NOT DECIDED</p>
+      <p id="experience-reason"><%= experience[:reason] %></p>
+    <% end %>
+  </section>
+
+  <section id="feature">
+    <h2>Feature — run_feature (typed variables)</h2>
+    <% @summary[:feature].each do |bf| %>
+      <article class="feature">
+        <dl>
+          <dt>Feature key</dt>
+          <dd class="feature-key"><%= bf[:key] %></dd>
+          <dt>Status</dt>
+          <dd class="feature-status"><%= bf[:status] %></dd>
+        </dl>
+        <h3>Variables</h3>
+        <% if bf[:variables].any? %>
+          <ul class="feature-variables">
+            <% bf[:variables].each do |var_key, cast| %>
+              <li class="feature-variable">
+                <span class="var-name"><%= var_key %></span> =
+                <span class="var-value"><%= cast[:value] %></span>
+                (<span class="var-type"><%= cast[:type] %></span>)
+              </li>
+            <% end %>
+          </ul>
+        <% else %>
+          <p class="feature-no-variables">none</p>
+        <% end %>
+      </article>
+    <% end %>
+  </section>
+
+  <section id="segments">
+    <h2>Custom segments — run_custom_segments</h2>
+    <% if @summary[:segments].any? %>
+      <ul id="attached-segments">
+        <% @summary[:segments].each do |segment_id| %>
+          <li class="segment"><%= segment_id %></li>
+        <% end %>
+      </ul>
+    <% else %>
+      <p id="no-segments">none attached</p>
+    <% end %>
+  </section>
+
+  <section id="conversion">
+    <h2>Conversion — track_conversion (revenue goal_data)</h2>
+    <% conversion = @summary[:conversion] %>
+    <dl>
+      <dt>Goal key</dt>
+      <dd id="goal-key"><%= conversion[:goal_key] %></dd>
+      <dt>Amount</dt>
+      <dd id="conversion-amount"><%= conversion[:amount] %></dd>
+      <dt>Transaction id</dt>
+      <dd id="transaction-id"><%= conversion[:transaction_id] %></dd>
+    </dl>
+  </section>
+</main>

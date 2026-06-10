@@ -1,0 +1,16 @@
+--output-dir doc
+--markup markdown
+--protected
+--no-private
+--readme README.md
+--title "Convert Ruby SDK"
+lib/**/*.rb
+-
+CONTRIBUTING.md
+docs/quickstart-rails.md
+docs/quickstart-sidekiq.md
+docs/quickstart-lambda.md
+docs/quickstart-cli.md
+docs/troubleshooting.md
+docs/migrate-from-kameleoon.md
+LICENSE

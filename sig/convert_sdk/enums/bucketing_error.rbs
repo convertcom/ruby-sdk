@@ -1,0 +1,6 @@
+module ConvertSdk
+  # Bucketing business misses, signaled as frozen singleton Sentinels.
+  module BucketingError
+    VARIATION_NOT_DECIDED: ConvertSdk::Sentinel
+  end
+end

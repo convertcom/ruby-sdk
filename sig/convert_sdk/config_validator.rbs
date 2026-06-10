@@ -1,0 +1,34 @@
+module ConvertSdk
+  # The fail-fast validation rules for Config — the SDK's only raising surface.
+  class ConfigValidator
+    LOG_LEVEL_VALUES: Array[Integer]
+
+    @values: Hash[Symbol, untyped]
+
+    def initialize: (Hash[Symbol, untyped] values) -> void
+
+    def validate!: () -> void
+
+    private
+
+    def validate_presence!: () -> void
+
+    def validate_strings!: () -> void
+
+    def validate_integers!: () -> void
+
+    def validate_intervals!: () -> void
+
+    def validate_booleans!: () -> void
+
+    def validate_log_level!: () -> void
+
+    def require_string: (Symbol name, untyped value) -> void
+
+    def require_interval: (Symbol name, untyped value) -> void
+
+    def require_type: (Symbol name, untyped value, untyped type) -> void
+
+    def require_boolean: (Symbol name, untyped value) -> void
+  end
+end

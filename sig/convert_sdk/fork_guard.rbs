@@ -1,0 +1,35 @@
+module ConvertSdk
+  # The SDK's single fork-detection authority — the only Process._fork prepend.
+  module ForkGuard
+    self.@registry_mutex: Thread::Mutex
+    self.@timers: Array[untyped]
+    self.@child_callbacks: Array[untyped]
+    self.@installed: bool
+    self.@owner_pid: Integer
+    self.@logger: LogManager?
+
+    def self.owner_pid: () -> Integer
+
+    def self.logger: () -> LogManager?
+    def self.logger=: (LogManager? logger) -> LogManager?
+
+    def self.install!: () -> void
+
+    def self.forked?: () -> bool
+
+    def self.register_timer: (untyped timer) -> void
+
+    def self.register_child_callback: (untyped callable) -> void
+
+    def self.rearm!: () -> void
+
+    def self.stop_all_timers!: () -> void
+
+    def self.reset_for_tests!: () -> void
+
+    # The prepended _fork wrapper (Rails ForkTracker pattern).
+    module ForkHook
+      def _fork: () -> Integer
+    end
+  end
+end

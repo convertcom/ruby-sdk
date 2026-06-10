@@ -1,0 +1,32 @@
+module ConvertSdk
+  # Vendored pure-Ruby MurmurHash3 (x86 32-bit variant).
+  module MurmurHash3
+    MASK_32: Integer
+    C1: Integer
+    C2: Integer
+    M: Integer
+    N: Integer
+    R1: Integer
+    R2: Integer
+    FMIX_C1: Integer
+    FMIX_C2: Integer
+
+    # Compute the MurmurHash3 x86 32-bit hash of +key+ with +seed+.
+    # Returns an unsigned 32-bit integer (0..0xFFFFFFFF).
+    def self.hash: (String key, Integer seed) -> Integer
+
+    def self.mix_body: (String data, Integer length, Integer h1) -> Integer
+
+    def self.mix_tail: (String data, Integer length, Integer h1) -> Integer
+
+    def self.mix_k1: (Integer k1) -> Integer
+
+    def self.read_u32_le: (String data, Integer index) -> Integer
+
+    def self.byte_at: (String data, Integer index) -> Integer
+
+    def self.rotl32: (Integer value, Integer shift) -> Integer
+
+    def self.fmix32: (Integer hash) -> Integer
+  end
+end

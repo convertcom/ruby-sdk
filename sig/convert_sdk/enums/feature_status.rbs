@@ -1,0 +1,8 @@
+module ConvertSdk
+  # Feature toggle status. Wire values byte-identical to the JS SDK.
+  module FeatureStatus
+    ENABLED: String
+
+    DISABLED: String
+  end
+end

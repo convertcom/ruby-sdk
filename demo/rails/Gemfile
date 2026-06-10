@@ -1,0 +1,31 @@
+# frozen_string_literal: true
+
+# This is the DEMO app's Gemfile — it is NOT the gem's Gemfile and never enters
+# the gem package (the gemspec rejects every path under demo/). It exists so the
+# demo CI exercises the REAL gemspec via a path dependency: a packaging mistake
+# (a file missing from `spec.files`, a broken require) surfaces here, in the
+# demo's `bundle install` + boot, instead of at publish time.
+source "https://rubygems.org"
+
+# The SDK under test, by PATH — this resolves `convert_sdk.gemspec` two levels up
+# (demo/rails -> demo -> repo root) and builds the gem exactly as `gem build`
+# would, so the demo runs against the packaged file set, not the working tree.
+gem "convert_sdk", path: "../.."
+
+# Rails 7.2+ (the demo's floor — aligns with the gem's Ruby 3.1 floor). `~> 7.2`
+# keeps the demo on the 7.2 series; the SDK touches none of Rails, so any 7.2.x
+# resolved per-job by the CI matrix works.
+gem "rails", "~> 7.2"
+
+# Puma in CLUSTER mode is the whole point: config/puma.rb sets `workers 2` +
+# `preload_app!`, the exact production deployment shape that silently loses
+# events in fork-unsafe SDKs. The fork-safety smoke boots THIS Puma.
+gem "puma", "~> 6.0"
+
+# NOTE: NO database gem. The demo is API-lean (a couple of controllers); it needs
+# no persistence, so there is no sqlite3/pg/activerecord dependency to slow the
+# Docker boot or the smoke. The SDK keeps its own in-memory visitor store.
+
+# Gemfile.lock is intentionally NOT committed for this demo (see demo/rails/.gitignore)
+# — per-job bundler resolution across the CRuby 3.1-3.4 + JRuby matrix, the same
+# rationale as the gem's own .gitignore.

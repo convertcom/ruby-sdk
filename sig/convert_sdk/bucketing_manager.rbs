@@ -1,0 +1,32 @@
+module ConvertSdk
+  # Deterministic visitor bucketing — the cross-SDK variation-assignment engine.
+  # Byte-identical to the JS SDK bucketing-manager.ts and the proven PHP port.
+  # @api private
+  class BucketingManager
+    # A traffic percentage as supplied by the caller — Integer (e.g. 50) or
+    # Float (e.g. 50.0, the wire shape of test-config variations).
+    type percentage = Integer | Float
+
+    @max_traffic: Integer
+    @hash_seed: Integer
+    @max_hash: Float
+    @log_manager: LogManager?
+
+    def initialize: (config: Config, ?log_manager: LogManager?) -> void
+
+    # Compute the deterministic bucket value for a visitor in [0, max_traffic).
+    def value_visitor_based: (untyped visitor_id, ?experience_id: String, ?seed: Integer) -> Integer
+
+    # Select the variation whose cumulative range contains +value+, or nil.
+    def select_bucket: (Hash[String, percentage] buckets, Integer value, ?percentage redistribute) -> String?
+
+    # Resolve a visitor to {variation_id:, bucketing_allocation:}, or nil.
+    def bucket_for_visitor: (
+      Hash[String, percentage] buckets,
+      untyped visitor_id,
+      ?experience_id: String,
+      ?seed: Integer,
+      ?redistribute: percentage
+    ) -> Hash[Symbol, untyped]?
+  end
+end

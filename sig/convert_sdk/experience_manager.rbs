@@ -1,0 +1,26 @@
+module ConvertSdk
+  # Variation-selection support — the thin per-experience / across-experiences
+  # entry surface over the DataManager decision flow (Story 2.11). Mirrors the JS
+  # experience-manager.ts division of labor: selection here, the ordered decision
+  # FLOW in DataManager#get_bucketing.
+  class ExperienceManager
+    @data_manager: DataManager
+    @log_manager: LogManager?
+
+    def initialize: (
+      data_manager: DataManager,
+      ?log_manager: LogManager?
+    ) -> void
+
+    def select_variation: (
+      String visitor_id,
+      String experience_key,
+      ?Hash[Symbol, untyped] attributes
+    ) -> (BucketedVariation | Sentinel)
+
+    def select_variations: (
+      String visitor_id,
+      ?Hash[Symbol, untyped] attributes
+    ) -> Array[BucketedVariation]
+  end
+end

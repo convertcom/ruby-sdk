@@ -1,0 +1,66 @@
+# Story 5.1 — the live-platform staging suite (FR65 / NFR5).
+#
+# A SEPARATE workflow from qa.yml (Quality Checks): the :staging suite hits the
+# real platform over the network and needs repository secrets, so it must NEVER
+# run in PR CI (no flakiness, no secret exposure to fork PRs). It runs only on a
+# daily SCHEDULE and on manual DISPATCH, surfacing platform schema drift on a
+# cadence instead of in a customer integration.
+#
+# TWO-KEY MODEL (php-sdk-aligned):
+#   without-secret variant: a PUBLIC staging key (no Bearer) — CONVERT_STAGING_SDK_KEY
+#   with-secret variant:    an AUTHENTICATED key + its secret (Bearer applied) —
+#                           CONVERT_STAGING_SDK_KEY2 + CONVERT_STAGING_SDK_KEY2_SECRET
+# Each variant sees ONLY its own credentials — the other variant's key is never
+# present in its environment. Credential selection in the specs is env-presence-
+# driven (see spec/support/staging_helpers.rb).
+#
+# qa.yml is intentionally untouched — staging is its own workflow.
+name: Staging (live platform)
+
+on:
+  schedule:
+    # Daily at 06:17 UTC — an off-peak, non-round minute (avoids the top-of-hour
+    # GitHub-scheduler congestion that delays cron jobs).
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  staging:
+    name: ":staging suite (${{ matrix.variant }})"
+    runs-on: ubuntu-latest
+    # The :staging suite at TRACE proves zero secret leakage live (NFR5). The
+    # with-secret variant authenticates Bearer-style using an AUTHENTICATED key;
+    # the without-secret variant exercises the public-key (no-secret) auth path
+    # using a separate PUBLIC key. Both run the same suite — fail-fast off so
+    # one variant's result never masks the other's drift signal.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: with-secret
+          - variant: without-secret
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        # One CRuby (3.4 — latest stable, matching qa.yml's single-Ruby jobs).
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: Inject the public staging key (without-secret variant)
+        if: matrix.variant == 'without-secret'
+        run: echo "CONVERT_STAGING_SDK_KEY=${{ secrets.CONVERT_STAGING_SDK_KEY }}" >> "$GITHUB_ENV"
+      - name: Inject the authenticated staging key + secret (with-secret variant)
+        if: matrix.variant == 'with-secret'
+        run: |
+          echo "CONVERT_STAGING_SDK_KEY2=${{ secrets.CONVERT_STAGING_SDK_KEY2 }}" >> "$GITHUB_ENV"
+          echo "CONVERT_STAGING_SDK_KEY2_SECRET=${{ secrets.CONVERT_STAGING_SDK_KEY2_SECRET }}" >> "$GITHUB_ENV"
+      - name: RSpec (:staging suite, TRACE zero-leakage scan)
+        # --tag staging opts INTO the suite that the default run excludes. The
+        # specs run the SDK at LogLevel::TRACE with a CapturingSink and assert no
+        # raw secret reaches the logs (Redactor verified live, NFR5) — the scan
+        # lives in-suite (secret in memory), never grepping CI logs for a secret.
+        run: bundle exec rspec --tag staging
