@@ -106,4 +106,9 @@ RSpec.configure do |config|
   config.expect_with :rspec do |c|
     c.syntax = :expect
   end
+
+  # Shared WebMock stub/capture helpers (config + track endpoints) for the HTTP
+  # port and its downstream consumers (Epics 2/4). Reset capture per example.
+  config.include HttpStubs
+  config.before { reset_http_capture }
 end
