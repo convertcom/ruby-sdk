@@ -1,0 +1,16 @@
+{
+  "name": "convert-ruby-sdk-release-tooling",
+  "private": true,
+  "description": "Release automation tooling for the Convert Ruby SDK (semantic-release). Dev-only — the published gem keeps ZERO runtime dependencies and contains no Node artifacts (the gemspec excludes package.json / release.config.mjs / node_modules).",
+  "scripts": {
+    "release": "semantic-release",
+    "release:dry-run": "semantic-release --dry-run --no-ci"
+  },
+  "devDependencies": {
+    "@semantic-release/exec": "^7.0.0",
+    "@semantic-release/github": "^11.0.0",
+    "@semantic-release/release-notes-generator": "^14.0.0",
+    "conventional-changelog-conventionalcommits": "^8.0.0",
+    "semantic-release": "^24.0.0"
+  }
+}
