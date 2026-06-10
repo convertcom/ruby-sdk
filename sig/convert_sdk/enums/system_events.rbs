@@ -1,0 +1,24 @@
+module ConvertSdk
+  # SDK system event names. Wire strings byte-identical to the JS SDK.
+  module SystemEvents
+    READY: String
+
+    CONFIG_UPDATED: String
+
+    BUCKETING: String
+
+    CONVERSION: String
+
+    API_QUEUE_RELEASED: String
+
+    SEGMENTS: String
+
+    LOCATION_ACTIVATED: String
+
+    LOCATION_DEACTIVATED: String
+
+    AUDIENCES: String
+
+    DATASTORE_QUEUE_RELEASED: String
+  end
+end

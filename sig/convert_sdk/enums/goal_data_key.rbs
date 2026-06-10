@@ -1,0 +1,22 @@
+module ConvertSdk
+  # Recognized keys for conversion goal data. Wire strings byte-identical to JS.
+  module GoalDataKey
+    AMOUNT: String
+
+    PRODUCTS_COUNT: String
+
+    TRANSACTION_ID: String
+
+    CUSTOM_DIMENSION_1: String
+
+    CUSTOM_DIMENSION_2: String
+
+    CUSTOM_DIMENSION_3: String
+
+    CUSTOM_DIMENSION_4: String
+
+    CUSTOM_DIMENSION_5: String
+
+    ALL: Array[String]
+  end
+end
