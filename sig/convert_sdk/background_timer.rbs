@@ -1,0 +1,31 @@
+module ConvertSdk
+  # The SDK's single background-thread primitive — the only Thread.new site.
+  class BackgroundTimer
+    @interval: (Integer | Float)?
+    @log_manager: LogManager
+    @name: String
+    @block: (^() -> void)?
+    @state_mutex: Thread::Mutex
+    @sleep_cv: Thread::ConditionVariable
+    @thread: Thread?
+    @running: bool
+
+    def initialize: (interval: (Integer | Float)?, log_manager: LogManager, name: String) ?{ () -> void } -> void
+
+    def start: () -> void
+
+    def stop: () -> void
+
+    def mark_dead: () -> void
+
+    def alive?: () -> bool
+
+    private
+
+    def run_loop: (Float interval) -> void
+
+    def running?: () -> bool
+
+    def tick: () -> void
+  end
+end
