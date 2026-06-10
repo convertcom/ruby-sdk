@@ -1,0 +1,61 @@
+module ConvertSdk
+  # The 13 rule comparison operators, ported byte-for-byte from the JS SDK
+  # comparisons.ts. Pure, stateless module functions. JS is the only truth; PHP
+  # is quarantined (missing existence operators; isIn case-folds the values side).
+  # @api private
+  module Comparisons
+    # An ABSENT-key marker, distinct from nil (a present null value). Mirrors JS
+    # undefined on the rule-evaluation path.
+    UNDEFINED: Object
+
+    # JS isNumeric regex (string-utils.ts:69).
+    NUMERIC_REGEXP: Regexp
+
+    # Wire-name -> Ruby-method dispatch map (frozen, 13 entries).
+    DISPATCH: Hash[String, Symbol]
+
+    def self.equals: (untyped value, untyped test_against, ?bool negation) -> bool
+
+    def self.equals_number: (untyped value, untyped test_against, ?bool negation) -> bool
+
+    def self.matches: (untyped value, untyped test_against, ?bool negation) -> bool
+
+    def self.less: (untyped value, untyped test_against, ?bool negation) -> bool
+
+    def self.less_equal: (untyped value, untyped test_against, ?bool negation) -> bool
+
+    def self.contains: (untyped value, untyped test_against, ?bool negation) -> bool
+
+    def self.is_in: (untyped values, untyped test_against, ?bool negation, ?String splitter) -> bool
+
+    def self.starts_with: (untyped value, untyped test_against, ?bool negation) -> bool
+
+    def self.ends_with: (untyped value, untyped test_against, ?bool negation) -> bool
+
+    def self.regex_matches: (untyped value, untyped test_against, ?bool negation) -> bool
+
+    def self.exists: (untyped value, ?untyped test_against, ?bool negation) -> bool
+
+    def self.not_exists: (untyped value, ?untyped test_against, ?bool negation) -> bool
+
+    def self.does_not_exist: (untyped value, ?untyped test_against, ?bool negation) -> bool
+
+    # The wire-name -> Ruby-method dispatch map, consumed by RuleManager.
+    def self.dispatch: () -> Hash[String, Symbol]
+
+    # JS isNumeric parity (string-utils.ts:68-74).
+    def self.numeric?: (untyped value) -> bool
+
+    # JS toNumber parity (string-utils.ts:81-91).
+    def self.to_number: (untyped value) -> Numeric
+
+    # Numeric comparison core shared by less/less_equal.
+    def self.compare_numeric: (untyped value, untyped test_against, bool negation) { (untyped, untyped) -> bool } -> bool
+
+    # JS typeof parity guard for compare_numeric.
+    def self.same_compare_type?: (untyped value, untyped test_against) -> bool
+
+    # JS _returnNegationCheck (comparisons.ts:174-183).
+    def self.negation_check: (bool result, bool negation) -> bool
+  end
+end

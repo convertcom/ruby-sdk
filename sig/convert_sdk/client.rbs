@@ -1,0 +1,76 @@
+module ConvertSdk
+  # The SDK runtime handle returned by ConvertSdk.create.
+  class Client
+    @config: Config
+    @log_manager: LogManager
+    @http_client: HttpClient
+    @data_store_manager: DataStoreManager
+    @event_manager: EventManager
+    @data_manager: DataManager
+    @api_manager: ApiManager
+    @experience_manager: ExperienceManager?
+    @feature_manager: FeatureManager?
+    @segments_manager: SegmentsManager?
+    @refresh_timer: BackgroundTimer
+    @at_exit_pid: Integer
+
+    attr_reader config: Config
+    attr_reader data_manager: DataManager
+    attr_reader api_manager: ApiManager
+
+    def initialize: (
+      config: Config,
+      log_manager: LogManager,
+      http_client: HttpClient,
+      data_store_manager: DataStoreManager,
+      event_manager: EventManager,
+      data_manager: DataManager,
+      api_manager: ApiManager,
+      ?experience_manager: ExperienceManager?,
+      ?feature_manager: FeatureManager?,
+      ?segments_manager: SegmentsManager?
+    ) -> void
+
+    def on: (untyped event) ?{ (untyped payload, untyped err) -> void } -> self
+
+    def config_available?: () -> bool
+
+    def create_context: (?String? visitor_id, ?Hash[untyped, untyped]? attributes) -> Context?
+
+    def ensure_refresh_timer!: () -> self
+
+    def ensure_fresh_config!: () -> self
+
+    def flush: (?String? reason) -> self
+
+    alias release_queues flush
+
+    def postfork: () -> self
+
+    private
+
+    def build_context: (String visitor_id, Hash[untyped, untyped]? attributes) -> Context
+
+    def register_at_exit_flush: () -> void
+
+    def run_at_exit_flush: () -> void
+
+    def build_refresh_timer: () -> BackgroundTimer
+
+    def refresh_config: () -> void
+
+    def refetch_config: () -> Hash[String, untyped]?
+
+    def bootstrap_config: () -> void
+
+    def fetch_and_install_config: () -> void
+
+    def install: (untyped source, String log_message) -> void
+
+    def config_url: () -> String
+
+    def fetch_headers: () -> Hash[String, String]
+
+    def stringify_keys: (untyped node) -> untyped
+  end
+end

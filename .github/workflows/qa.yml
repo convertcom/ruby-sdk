@@ -1,0 +1,249 @@
+# IMPORTANT: the workflow name below is LOAD-BEARING. Story 5.4's release.yml
+# triggers on `workflow_run` of a workflow named exactly "Quality Checks".
+# Do not rename.
+name: Quality Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    name: PR title (Conventional Commits)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Validate PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # Dependency-free Conventional Commits check (squash-merge-only repo:
+          # the squash commit subject is the PR title).
+          if ! echo "$PR_TITLE" | grep -qE '^(feat|fix|docs|test|refactor|perf|build|ci|chore)(\(.+\))?!?: .+'; then
+            echo "::error::PR title must follow Conventional Commits: '$PR_TITLE'"
+            echo "Expected: <type>(<scope>)?!?: <description>"
+            echo "Allowed types: feat, fix, docs, test, refactor, perf, build, ci, chore"
+            exit 1
+          fi
+          echo "PR title OK: $PR_TITLE"
+
+  lint:
+    name: Lint (RuboCop)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: RuboCop
+        run: bundle exec rubocop
+      - name: Release-safety — forbidden release mechanisms absent
+        # A STEP in the existing lint job (NOT a new required check) so the PR
+        # check count stays put (Story 5.4 / Story 1.1 precedent). Asserts the
+        # ratified-forbidden release mechanisms never reappear in the release
+        # config/workflow/Rakefile surface. Each check matches ACTUAL USAGE, not
+        # prose — the release.config.mjs / release.yml comments deliberately NAME
+        # these forbidden tokens to document the prohibition, so a naive
+        # whole-file grep would false-positive on the very files documenting it.
+        # Scope is the config/workflow/Rakefile surface only — NOT docs.
+        #   - @semantic-release/git / @semantic-release/changelog → matched only
+        #     as a QUOTED plugin/devDependency entry in release.config.mjs /
+        #     package.json (would commit to main / produce a committed CHANGELOG).
+        #   - bundler/gem_tasks required, or a `task :release` defined → either
+        #     resurrects `rake release`, whose git_push pushes a branch ref
+        #     (Android qs-03 GH013).
+        #   - `uses: rubygems/release-gem` in any workflow → the gem-release
+        #     action this pipeline deliberately replaced with OIDC semantic-release.
+        run: |
+          status=0
+          if grep -rnE "['\"]@semantic-release/(git|changelog)['\"]" release.config.mjs package.json; then
+            echo "::error::Forbidden semantic-release plugin (git/changelog) present — this pipeline commits NOTHING to main and ships NO CHANGELOG."
+            status=1
+          fi
+          if grep -nE "^[[:space:]]*require[[:space:]].*bundler/gem_tasks" Rakefile; then
+            echo "::error::bundler/gem_tasks is required in the Rakefile — it defines 'rake release' (git_push branch ref → GH013). Forbidden."
+            status=1
+          fi
+          if grep -nE "^[[:space:]]*task[[:space:]].*:release|^[[:space:]]*task[[:space:]]+[\"']release" Rakefile; then
+            echo "::error::A 'rake release' task is defined in the Rakefile. Forbidden — publishing happens only via the OIDC release.yml."
+            status=1
+          fi
+          if grep -rnE "^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*rubygems/release-gem" .github/workflows/; then
+            echo "::error::A workflow uses rubygems/release-gem — replaced by OIDC semantic-release (release.yml). Forbidden."
+            status=1
+          fi
+          if [ "$status" -eq 0 ]; then
+            echo "Release-safety guard OK: no forbidden release mechanisms found."
+          fi
+          exit $status
+      - name: Docs — broken relative-link check
+        # A STEP in the existing lint job (NOT a new required check) so the PR
+        # check count stays put. Extracts every Markdown link in README /
+        # CONTRIBUTING / RELEASE, skips http(s)/mailto and pure-anchor links,
+        # strips the #fragment, and asserts each relative target exists
+        # (resolved against the linking file's directory). Fails the build on the
+        # first broken link.
+        run: |
+          status=0
+          while IFS= read -r src; do
+            while IFS= read -r link; do
+              case "$link" in
+                http://*|https://*|mailto:*) continue ;;
+              esac
+              target="${link%%#*}"
+              [ -z "$target" ] && continue
+              resolved="$(dirname "$src")/$target"
+              if [ ! -e "$resolved" ]; then
+                echo "::error file=$src::Broken relative link: $link (resolved: $resolved)"
+                status=1
+              fi
+            done < <(grep -oE '\]\([^)]+\)' "$src" | sed -E 's/^\]\(//; s/\)$//')
+          done < <(find README.md CONTRIBUTING.md RELEASE.md -name '*.md')
+          exit $status
+
+  typecheck:
+    name: Typecheck (RBS + Steep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: Enforce generated-file header (RBS types)
+        # PR-blocking guard (qs-03 / B5). Mirrors android-sdk ci.yml:51.
+        # Every .rbs under sig/convert_sdk/config/generated/ must start with
+        # the AUTO-GENERATED marker. Files that lack it are either hand-edited
+        # or mistakenly added — both cases block the PR. Regenerate via the
+        # backend serving workflow; never hand-edit generated files.
+        run: bash scripts/check-generated-rbs-header.sh
+      - name: rbs validate
+        # `-r` loads the stdlib library RBS that the signatures reference (kept in
+        # sync with the Steepfile's `library` declarations). Without these, the
+        # standalone validate can't resolve stdlib types like URI::Generic that
+        # appear in sig/ (e.g. the HTTP port), even though steep resolves them.
+        run: bundle exec rbs -r net-http -r uri -r json -I sig validate
+      - name: steep check
+        run: bundle exec steep check
+
+  test:
+    name: Test (${{ matrix.ruby }})
+    runs-on: ubuntu-latest
+    # `rbs`/`steep` live in the :typecheck Gemfile group; exclude them here so
+    # NO matrix leg installs them. JRuby in particular cannot build rbs's
+    # `ext/rbs_extension` C extension (universal-java) — without this, the JRuby
+    # leg's `bundle install` aborts before any spec runs. RSpec needs neither
+    # gem; the dedicated `typecheck` job installs the full set (no BUNDLE_WITHOUT).
+    env:
+      BUNDLE_WITHOUT: typecheck
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby:
+          - "3.1"
+          - "3.2"
+          - "3.3"
+          - "3.4"
+          - "jruby"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        # No committed Gemfile.lock: setup-ruby runs `bundle lock` per matrix
+        # leg, resolving an engine/version-compatible dependency set for each
+        # Ruby. No Java/JDK setup for the JRuby leg — setup-ruby self-recovers
+        # to Java 21.
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+      - name: RSpec
+        run: bundle exec rspec
+
+  parity:
+    name: Cross-SDK parity (MurmurHash3)
+    runs-on: ubuntu-latest
+    # The release-blocking cross-SDK hashing gate (NFR18). Runs the parity suite
+    # STANDALONE and as its OWN job so it is independent of the `test` job: a
+    # coverage failure in `test` can never mask a parity failure, and vice versa.
+    # 100% of the 75 vendored vectors must pass or this job fails.
+    #
+    # Pinned to one CRuby (3.4 — latest stable, matching the other single-Ruby
+    # jobs). The cross-ENGINE guarantee is already covered by the matrix `test`
+    # job, which also executes spec/cross_sdk on every Ruby including JRuby.
+    #
+    # Excludes the :typecheck group (rbs/steep) — parity needs neither, and the
+    # group is isolated precisely so jobs can opt out of the C-extension build.
+    # DISABLE_COVERAGE: this job runs only spec/cross_sdk (the hashing gate) and
+    # is independent of coverage — coverage is enforced by the full-suite `test`
+    # job. Opting out stops the global 85% line gate from being applied to this
+    # deliberately-narrow subset (see spec/spec_helper.rb).
+    env:
+      BUNDLE_WITHOUT: typecheck
+      DISABLE_COVERAGE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: RSpec (parity suite only)
+        run: bundle exec rspec spec/cross_sdk
+
+  full-chain:
+    name: Full-chain release gate
+    runs-on: ubuntu-latest
+    # The release-blocking end-to-end gate (Story 4.7, FR64 / NFR5). Runs the
+    # full-chain spec STANDALONE and as its OWN job so it is independent of the
+    # `test` job: a coverage failure in `test` can never mask a wiring or
+    # zero-leakage regression, and vice versa. One deterministic scenario asserts
+    # the whole loop (create -> decide -> track -> flush), the exact wire bytes
+    # field-by-field, the UA + Bearer header invariants on BOTH endpoints, and
+    # zero raw-secret leakage at TRACE.
+    #
+    # Pinned to one CRuby (3.4 — matching the other single-Ruby jobs). The
+    # cross-ENGINE guarantee is already covered by the matrix `test` job, which
+    # also executes spec/integration on every Ruby including JRuby.
+    #
+    # Excludes the :typecheck group (rbs/steep) — this gate needs neither, and the
+    # group is isolated precisely so jobs can opt out of the C-extension build.
+    # DISABLE_COVERAGE: this job runs only spec/integration/full_chain_spec.rb and
+    # is independent of coverage — coverage is enforced by the full-suite `test`
+    # job. Opting out stops the global 85% line gate from being applied to this
+    # deliberately-narrow single spec (see spec/spec_helper.rb).
+    env:
+      BUNDLE_WITHOUT: typecheck
+      DISABLE_COVERAGE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: RSpec (full-chain release gate only)
+        run: bundle exec rspec spec/integration/full_chain_spec.rb
+
+  gem-smoke:
+    name: Gem build / install / require smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: Build, install, require
+        run: |
+          gem build convert_sdk.gemspec
+          gem install ./convert_sdk-*.gem
+          ruby -e "require 'convert_sdk'; raise 'VERSION missing' unless ConvertSdk::VERSION"

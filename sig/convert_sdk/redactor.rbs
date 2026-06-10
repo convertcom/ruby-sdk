@@ -1,0 +1,24 @@
+module ConvertSdk
+  # Masks secrets and strips URL query strings out of log messages.
+  class Redactor
+    MASK_PREFIX_LENGTH: Integer
+    MASK_GLYPH: String
+    URL_QUERY_PATTERN: Regexp
+
+    @secrets: Array[String]
+
+    def initialize: (?Array[String?] secrets) -> void
+
+    def register_secret: (String? secret) -> void
+
+    def redact: (String message) -> String
+
+    private
+
+    def mask_secrets: (String message) -> String
+
+    def masked: (String secret) -> String
+
+    def strip_url_queries: (String message) -> String
+  end
+end

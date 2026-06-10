@@ -1,0 +1,8 @@
+module ConvertSdk
+  # Rule-evaluation business misses, signaled as frozen singleton Sentinels.
+  module RuleError
+    NO_DATA_FOUND: ConvertSdk::Sentinel
+
+    NEED_MORE_DATA: ConvertSdk::Sentinel
+  end
+end
