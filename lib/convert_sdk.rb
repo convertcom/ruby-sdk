@@ -36,6 +36,13 @@ ConvertSdk::ForkGuard.install!
 # {ConvertSdk.create} is THE public entry point (frozen API name): it builds the
 # validated {Config}, wires the managers, and returns a ready-to-use {Client}.
 module ConvertSdk
+  # The default config-cache TTL in seconds, used by the timer-off (Lambda/CLI)
+  # decision-time staleness check when +data_refresh_interval+ is +nil+
+  # (timer-off ≠ TTL-off). 300s converges on the same cadence the background
+  # timer uses, on demand. A Ruby-SDK design constant (PHP on-demand TTL
+  # semantics) — the JS SDK has no timer-off TTL concept. See Story 2.7.
+  DEFAULT_CONFIG_TTL = 300
+
   # The SDK's base error type. Note the SDK has NO custom exception hierarchy for
   # runtime/infra failures (Decision 3 — it degrades gracefully with cached
   # config / sentinels); misconfiguration surfaces as a plain +ArgumentError+
@@ -59,14 +66,21 @@ module ConvertSdk
   #   supplied, no fetch occurs.
   # @param store [Object, nil] an optional duck-typed data store (get/set);
   #   defaults to an in-memory store.
+  # @param clock [#call, nil] an optional monotonic time source (seconds) for
+  #   the config-cache TTL math (Story 2.7); defaults to the SDK's monotonic
+  #   clock. Injectable so tests control staleness without real waits. NOT a
+  #   {Config} option — extracted here before validation.
   # @param options [Hash{Symbol=>Object}] any other {Config::DEFAULTS} option
   #   (+sdk_key_secret+, +environment+, +log_level+, timeouts, …).
   # @raise [ArgumentError] on misconfiguration (missing sdk_key+data, bad types,
   #   unknown option) — the only exception {create} lets escape.
   # @return [Client] the wired SDK client.
-  def self.create(sdk_key: nil, data: nil, store: nil, **options)
+  def self.create(sdk_key: nil, data: nil, store: nil, clock: nil, **options)
     config_options = options.merge(sdk_key: sdk_key, data: data)
     log_manager = LogManager.new(level: options.fetch(:log_level, Config::DEFAULTS[:log_level]))
+    # Wire the ForkGuard re-arm logger (Story 2.7) so fork-detection debug lines
+    # flow through the redacting LogManager. nil-safe before wiring.
+    ForkGuard.logger = log_manager
     config = Config.new(log_manager: log_manager, **config_options)
 
     http_client = HttpClient.new(
@@ -76,7 +90,7 @@ module ConvertSdk
     )
     data_store_manager = DataStoreManager.new(log_manager: log_manager, store: store)
     event_manager = EventManager.new(log_manager: log_manager)
-    data_manager = DataManager.new(log_manager: log_manager)
+    data_manager = build_data_manager(config, log_manager, data_store_manager, clock)
 
     Client.new(
       config: config,
@@ -87,4 +101,23 @@ module ConvertSdk
       data_manager: data_manager
     )
   end
+
+  # Build the {DataManager} wired with the Story 2.7 config-cache surface: the
+  # cache lives under +convert_sdk.config.{sdkKey}+ (the DataManager writes
+  # through on every install and runs the timer-off TTL check against it). A nil
+  # sdk_key (direct-data mode) leaves the cache key nil, so no cache write
+  # happens. The +clock+ (monotonic TTL source) is injected only when supplied.
+  # @api private
+  def self.build_data_manager(config, log_manager, data_store_manager, clock)
+    config_key = config.sdk_key.nil? ? nil : data_store_manager.config_key(config.sdk_key)
+    clock_option = clock.nil? ? {} : { clock: clock } #: Hash[Symbol, ^() -> Float]
+    DataManager.new(
+      log_manager: log_manager,
+      data_store_manager: data_store_manager,
+      config_key: config_key,
+      ttl: config.data_refresh_interval,
+      **clock_option
+    )
+  end
+  private_class_method :build_data_manager
 end
