@@ -13,104 +13,43 @@
 #   2. bundle exec steep check
 #   3. Steep FAILS with (exit code 1):
 #
-#      steep/config_contract_probe.rb:99:4: [warning] Unknown key `"key"` is given to a record type
+#      steep/config_contract_probe.rb:96:4: [warning] Unknown key `"key"` is given to a record type
 #        Diagnostic ID: Ruby::UnknownRecordKey
 #        └ "key" => nil,  # => find_by_key (goal_by_key) matches on goal["key"]
 #
-#      steep/config_contract_probe.rb:97:4: [error] Cannot pass a value of type
+#      steep/config_contract_probe.rb:94:4: [error] Cannot pass a value of type
 #        `{ "id" => nil, ?"key" => nil, ... }` as an argument of type ::ConvertSdk::config_goal
 #        Diagnostic ID: Ruby::ArgumentTypeMismatch
 #        └ "id" => nil, ... (the probe_goal_fields literal)
 #
-#      The exact probe lines (99 = UnknownRecordKey, 97 = ArgumentTypeMismatch)
+#      The exact probe lines (96 = UnknownRecordKey, 94 = ArgumentTypeMismatch)
 #      are named — "key" was removed from config_goal.
-#   4. Restore: git checkout sig/convert_sdk/config/generated/types.rbs
+#   4. Restore: cp the baseline types.rbs back from backup or git
 #
 # The ArgumentTypeMismatch (error level) causes steep check to exit non-zero,
 # blocking the backend-opened PR pre-merge. The drift gate caught a depended-field
 # removal at build time, before any runtime code ran.
 
 module ConvertSdk
+  # ── Primitive aliases ──────────────────────────────────────────────────────
+
+  # A nested rule structure (OR of AND blocks of OR_WHEN rule elements).
+  # Typed as untyped to avoid false positives from arbitrarily deep nesting.
   type rule_object = untyped
 
+  # ── Discriminator unions (reflected from dist/types.gen.ts) ─────────────────
+
   # DRIFT: "key" removed from config_goal to demonstrate AC1.
+  # All 10 ConfigGoal discriminator-mapping values (AC4) — inherited
+  # verbatim from dist/types.gen.ts via fix-discriminants.js, NOT the 5-value
+  # GoalTypes enum subset.
   type goal_type = "dom_interaction" | "scroll_percentage" | "revenue" | "advanced" | "visits_page" | "code_trigger" | "ga_import" | "submits_form" | "clicks_link" | "clicks_element"
 
   type feature_variable_type = "boolean" | "float" | "json" | "integer" | "string"
 
   type ga_integration_type = "ga3" | "ga4"
 
-  type feature_variable = {
-    "key" => String?,
-    "type" => feature_variable_type?
-  }
-
-  type config_feature = {
-    "id" => String?,
-    "name" => String?,
-    "key" => String?,
-    "variables" => Array[feature_variable]?
-  }
-
-  type experience_variation = {
-    "id" => String?,
-    "name" => String?,
-    "key" => String?,
-    "traffic_allocation" => Numeric?,
-    "status" => String?,
-    "changes" => Array[untyped]?
-  }
-
-  type config_experience = {
-    "id" => String?,
-    "name" => String?,
-    "key" => String?,
-    "type" => String?,
-    "status" => String?,
-    "variations" => Array[experience_variation]?,
-    "goals" => Array[String]?,
-    "locations" => untyped,
-    "audiences" => untyped,
-    "site_area" => rule_object,
-    "environment" => String?,
-    "integrations" => Array[untyped]?
-  }
-
-  # "key" field intentionally REMOVED to trigger AC1 drift detection.
-  type config_goal = {
-    "id" => String?,
-    "name" => String?,
-    "type" => goal_type?,
-    "rules" => rule_object
-  }
-
-  type config_audience = {
-    "id" => String?,
-    "key" => String?,
-    "name" => String?,
-    "type" => String?,
-    "rules" => rule_object
-  }
-
-  type config_location = {
-    "id" => String?,
-    "key" => String?,
-    "name" => String?,
-    "rules" => rule_object
-  }
-
-  type config_segment = {
-    "id" => String?,
-    "key" => String?,
-    "name" => String?,
-    "rules" => rule_object
-  }
-
-  type config_project = {
-    "id" => String?,
-    "name" => String?,
-    "type" => String?
-  }
+  # ── Reflected config entities ──────────────────────────────────────────────
 
   type config_response_data = {
     "account_id" => String?,
@@ -120,16 +59,113 @@ module ConvertSdk
     "audiences" => Array[config_audience]?,
     "segments" => Array[config_segment]?,
     "experiences" => Array[config_experience]?,
-    "features" => Array[config_feature]?
+    "archived_experiences" => Array[String]?,
+    "features" => Array[config_feature]?,
+    "is_debug" => bool?
+  }
+
+  type config_project = {
+    "id" => String?,
+    "name" => String?,
+    "type" => String?,
+    "utc_offset" => untyped?,
+    "custom_domain" => { "domain" => String?, "version" => String? }?,
+    "domains" => Array[{ "tld" => String?, "hosts" => untyped? }]?,
+    "global_javascript" => String?,
+    "settings" => { "allow_crossdomain_tracking" => bool?, "data_anonymization" => bool?, "do_not_track" => String?, "global_privacy_control" => String?, "do_not_track_referral" => bool?, "integrations" => { "google_analytics" => untyped?, "visitor_insights" => { "tracking_id" => untyped? }?, "kissmetrics" => { "enabled" => bool? }? }?, "min_order_value" => Numeric?, "max_order_value" => Numeric?, "outliers" => { "order_value" => untyped?, "products_ordered_count" => untyped? }?, "placeholders" => Array[String]?, "global_javascript_placeholders" => Array[String]?, "include_jquery" => bool?, "include_jquery_v1" => bool?, "disable_spa_functionality" => bool?, "version" => String?, "tracking_script" => untyped? }?
+  }
+
+  type config_experience = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "locations" => Array[String]?,
+    "site_area" => rule_object?,
+    "audiences" => Array[String]?,
+    "goals" => Array[String]?,
+    "multipage_pages" => Array[untyped]?,
+    "status" => String?,
+    "global_js" => String?,
+    "global_css" => String?,
+    "type" => String?,
+    "version" => Numeric?,
+    "variations" => Array[experience_variation]?,
+    "integrations" => Array[untyped]?,
+    "environments" => Array[String]?,
+    "environment" => String?,
+    "settings" => { "min_order_value" => Numeric?, "max_order_value" => Numeric?, "outliers" => { "order_value" => untyped?, "products_ordered_count" => untyped? }?, "placeholders" => Array[String]?, "split_url_settings" => { "split_regex_support" => bool? }?, "matching_options" => { "audiences" => String?, "locations" => String? }? }?
+  }
+
+  type experience_variation = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "traffic_allocation" => Numeric?,
+    "status" => String?,
+    "changes" => Array[feature_change_data]?
+  }
+
+  type feature_change_data = {
+    "id" => Numeric?,
+    "type" => String?,
+    "data" => { "feature_id" => Numeric?, "variables_data" => untyped? }?
+  }
+
+  # "key" field intentionally REMOVED to trigger AC1 drift detection.
+  type config_goal = {
+    "id" => String?,
+    "name" => String?,
+    "type" => goal_type?,
+    "rules" => rule_object?
+  }
+
+  type config_audience = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "type" => String?,
+    "rules" => rule_object?
+  }
+
+  type config_location = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "trigger" => untyped?,
+    "rules" => rule_object?
+  }
+
+  type config_segment = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "rules" => rule_object?
+  }
+
+  type config_feature = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "variables" => Array[feature_variable]?
+  }
+
+  type feature_variable = {
+    "key" => String?,
+    "type" => feature_variable_type?
   }
 
   type experience_integration_ga_serving = {
+    "enabled" => bool?,
+    "provider" => String?,
     "type" => ga_integration_type?,
-    "enabled" => bool?
+    "measurementId" => String?
   }
 
   type ga_settings = {
+    "enabled" => bool?,
+    "auto_revenue_tracking" => bool?,
     "type" => ga_integration_type?,
-    "enabled" => bool?
+    "measurementId" => String?,
+    "no_wait_pageview" => bool?
   }
 end

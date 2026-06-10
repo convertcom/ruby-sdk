@@ -17,14 +17,19 @@
 #   3. bundle exec rspec          → MUST remain green
 #      (Runtime readers use plain-hash string-key access; unknown keys are
 #       silently ignored via fetch(name, nil) / collection(name) defaults.)
-#   4. Restore: cp sig/convert_sdk/config/generated/types.rbs back from git
-#      (git checkout sig/convert_sdk/config/generated/types.rbs)
+#   4. Restore: cp the baseline types.rbs back from backup or git
 #
 # This proves: neither the build-time gate nor the runtime breaks when the
 # backend spec adds new fields or new discriminator values (additive-safe).
 
 module ConvertSdk
+  # ── Primitive aliases ──────────────────────────────────────────────────────
+
+  # A nested rule structure (OR of AND blocks of OR_WHEN rule elements).
+  # Typed as untyped to avoid false positives from arbitrarily deep nesting.
   type rule_object = untyped
+
+  # ── Discriminator unions (reflected from dist/types.gen.ts) ─────────────────
 
   # ADDITIVE: "new_goal_type" added as a new discriminator value.
   type goal_type = "dom_interaction" | "scroll_percentage" | "revenue" | "advanced" | "visits_page" | "code_trigger" | "ga_import" | "submits_form" | "clicks_link" | "clicks_element" | "new_goal_type"
@@ -33,79 +38,7 @@ module ConvertSdk
 
   type ga_integration_type = "ga3" | "ga4"
 
-  type feature_variable = {
-    "key" => String?,
-    "type" => feature_variable_type?
-  }
-
-  type config_feature = {
-    "id" => String?,
-    "name" => String?,
-    "key" => String?,
-    "variables" => Array[feature_variable]?
-  }
-
-  type experience_variation = {
-    "id" => String?,
-    "name" => String?,
-    "key" => String?,
-    "traffic_allocation" => Numeric?,
-    "status" => String?,
-    "changes" => Array[untyped]?
-  }
-
-  type config_experience = {
-    "id" => String?,
-    "name" => String?,
-    "key" => String?,
-    "type" => String?,
-    "status" => String?,
-    "variations" => Array[experience_variation]?,
-    "goals" => Array[String]?,
-    "locations" => untyped,
-    "audiences" => untyped,
-    "site_area" => rule_object,
-    "environment" => String?,
-    "integrations" => Array[untyped]?
-  }
-
-  # ADDITIVE: "new_platform_field" added — probe does not access it; steep stays green.
-  type config_goal = {
-    "id" => String?,
-    "name" => String?,
-    "key" => String?,
-    "type" => goal_type?,
-    "rules" => rule_object,
-    "new_platform_field" => String?
-  }
-
-  type config_audience = {
-    "id" => String?,
-    "key" => String?,
-    "name" => String?,
-    "type" => String?,
-    "rules" => rule_object
-  }
-
-  type config_location = {
-    "id" => String?,
-    "key" => String?,
-    "name" => String?,
-    "rules" => rule_object
-  }
-
-  type config_segment = {
-    "id" => String?,
-    "key" => String?,
-    "name" => String?,
-    "rules" => rule_object
-  }
-
-  type config_project = {
-    "id" => String?,
-    "name" => String?,
-    "type" => String?
-  }
+  # ── Reflected config entities ──────────────────────────────────────────────
 
   type config_response_data = {
     "account_id" => String?,
@@ -115,16 +48,115 @@ module ConvertSdk
     "audiences" => Array[config_audience]?,
     "segments" => Array[config_segment]?,
     "experiences" => Array[config_experience]?,
-    "features" => Array[config_feature]?
+    "archived_experiences" => Array[String]?,
+    "features" => Array[config_feature]?,
+    "is_debug" => bool?
+  }
+
+  type config_project = {
+    "id" => String?,
+    "name" => String?,
+    "type" => String?,
+    "utc_offset" => untyped?,
+    "custom_domain" => { "domain" => String?, "version" => String? }?,
+    "domains" => Array[{ "tld" => String?, "hosts" => untyped? }]?,
+    "global_javascript" => String?,
+    "settings" => { "allow_crossdomain_tracking" => bool?, "data_anonymization" => bool?, "do_not_track" => String?, "global_privacy_control" => String?, "do_not_track_referral" => bool?, "integrations" => { "google_analytics" => untyped?, "visitor_insights" => { "tracking_id" => untyped? }?, "kissmetrics" => { "enabled" => bool? }? }?, "min_order_value" => Numeric?, "max_order_value" => Numeric?, "outliers" => { "order_value" => untyped?, "products_ordered_count" => untyped? }?, "placeholders" => Array[String]?, "global_javascript_placeholders" => Array[String]?, "include_jquery" => bool?, "include_jquery_v1" => bool?, "disable_spa_functionality" => bool?, "version" => String?, "tracking_script" => untyped? }?
+  }
+
+  type config_experience = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "locations" => Array[String]?,
+    "site_area" => rule_object?,
+    "audiences" => Array[String]?,
+    "goals" => Array[String]?,
+    "multipage_pages" => Array[untyped]?,
+    "status" => String?,
+    "global_js" => String?,
+    "global_css" => String?,
+    "type" => String?,
+    "version" => Numeric?,
+    "variations" => Array[experience_variation]?,
+    "integrations" => Array[untyped]?,
+    "environments" => Array[String]?,
+    "environment" => String?,
+    "settings" => { "min_order_value" => Numeric?, "max_order_value" => Numeric?, "outliers" => { "order_value" => untyped?, "products_ordered_count" => untyped? }?, "placeholders" => Array[String]?, "split_url_settings" => { "split_regex_support" => bool? }?, "matching_options" => { "audiences" => String?, "locations" => String? }? }?
+  }
+
+  type experience_variation = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "traffic_allocation" => Numeric?,
+    "status" => String?,
+    "changes" => Array[feature_change_data]?
+  }
+
+  type feature_change_data = {
+    "id" => Numeric?,
+    "type" => String?,
+    "data" => { "feature_id" => Numeric?, "variables_data" => untyped? }?
+  }
+
+  # ADDITIVE: "new_platform_field" added — probe does not access it; steep stays green.
+  type config_goal = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "type" => goal_type?,
+    "rules" => rule_object?,
+    "new_platform_field" => String?
+  }
+
+  type config_audience = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "type" => String?,
+    "rules" => rule_object?
+  }
+
+  type config_location = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "trigger" => untyped?,
+    "rules" => rule_object?
+  }
+
+  type config_segment = {
+    "id" => String?,
+    "key" => String?,
+    "name" => String?,
+    "rules" => rule_object?
+  }
+
+  type config_feature = {
+    "id" => String?,
+    "name" => String?,
+    "key" => String?,
+    "variables" => Array[feature_variable]?
+  }
+
+  type feature_variable = {
+    "key" => String?,
+    "type" => feature_variable_type?
   }
 
   type experience_integration_ga_serving = {
+    "enabled" => bool?,
+    "provider" => String?,
     "type" => ga_integration_type?,
-    "enabled" => bool?
+    "measurementId" => String?
   }
 
   type ga_settings = {
+    "enabled" => bool?,
+    "auto_revenue_tracking" => bool?,
     "type" => ga_integration_type?,
-    "enabled" => bool?
+    "measurementId" => String?,
+    "no_wait_pageview" => bool?
   }
 end
