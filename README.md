@@ -1,7 +1,7 @@
 # Convert Ruby SDK
 
 [![Quality Checks](https://github.com/convertcom/ruby-sdk/actions/workflows/qa.yml/badge.svg)](https://github.com/convertcom/ruby-sdk/actions/workflows/qa.yml)
-[![Gem Version](https://badge.fury.io/rb/convert_sdk.svg)](https://rubygems.org/gems/convert_sdk)
+[![Gem Version](https://img.shields.io/gem/v/convert_sdk.svg)](https://rubygems.org/gems/convert_sdk)
 [![API docs](https://img.shields.io/badge/API_docs-YARD-blue)](https://convertcom.github.io/ruby-sdk)
 
 The official Convert Experiences FullStack Ruby SDK — server-side A/B testing,
