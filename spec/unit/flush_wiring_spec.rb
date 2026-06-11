@@ -103,7 +103,7 @@ RSpec.describe "Event-queue wiring (Story 4.1)" do
       ConvertSdk.create(config_endpoint: HttpStubs::CONFIG_HOST, **options)
     end
 
-    let(:direct_data) { { "data" => { "account_id" => "10022898", "project" => { "id" => "10025986" } } } }
+    let(:direct_data) { { "account_id" => "10022898", "project" => { "id" => "10025986" } } }
 
     it "drains the queue synchronously through ApiManager#release_queue" do
       client = create(data: direct_data, sdk_key: "sdk-key-1", track_endpoint: "#{HttpStubs::TRACK_HOST}/[project_id]/v1")

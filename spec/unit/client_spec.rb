@@ -64,11 +64,11 @@ RSpec.describe ConvertSdk::Client do
     it "installs the supplied config so readers expose it" do
       client = create(data: direct_data)
       expect(client.data_manager.account_id).to eq("10022898")
-      expect(client.data_manager.experiences.size).to eq(direct_data["data"]["experiences"].size)
+      expect(client.data_manager.experiences.size).to eq(direct_data["experiences"].size)
     end
 
     it "normalises a symbol-keyed data object to string keys at the boundary" do
-      symbol_keyed = { environment: "staging", data: { account_id: "777", experiences: [] } }
+      symbol_keyed = { account_id: "777", experiences: [], project: { id: "999" } }
       client = create(data: symbol_keyed)
       expect(client.data_manager.account_id).to eq("777")
       expect(client.data_manager.experiences).to eq([])
@@ -101,7 +101,7 @@ RSpec.describe ConvertSdk::Client do
     end
 
     it "fires ready on the first successful install (direct data)" do
-      client = create(data: { "data" => { "account_id" => "1" } })
+      client = create(data: { "account_id" => "1", "project" => { "id" => "2" } })
       fired = []
       client.on("ready") { fired << :ready }
       expect(fired).to eq([:ready])
@@ -126,7 +126,7 @@ RSpec.describe ConvertSdk::Client do
       # replayed to the late subscriber above). A second install through the
       # Client's own install path is Story 2.7's refresh — it must fire
       # config.updated, never ready again.
-      client.send(:install, { "data" => { "account_id" => "2" } }, "refresh")
+      client.send(:install, { "account_id" => "2", "project" => { "id" => "2" } }, "refresh")
       expect(ready_count).to eq(1)
       expect(updated_count).to eq(1)
     end
@@ -134,7 +134,7 @@ RSpec.describe ConvertSdk::Client do
 
   describe "public surface" do
     it "#on returns self for chaining and never raises on a bad listener" do
-      client = create(data: { "data" => {} })
+      client = create(data: {})
       expect(client.on("ready")).to be(client)
     end
   end
@@ -239,7 +239,7 @@ RSpec.describe ConvertSdk::Client do
 
   describe "never-crash boundary" do
     let(:log_manager) { ConvertSdk::LogManager.new(level: ConvertSdk::LogLevel::TRACE, sink: CapturingSink.new) }
-    let(:config) { ConvertSdk::Config.new(data: { "data" => {} }, config_endpoint: HttpStubs::CONFIG_HOST) }
+    let(:config) { ConvertSdk::Config.new(data: {}, config_endpoint: HttpStubs::CONFIG_HOST) }
 
     # Build a Client with one collaborator replaced by a raising double, to
     # exercise the rescue boundaries directly.

@@ -19,7 +19,7 @@ RSpec.describe "Fork safety integration (Story 4.4)" do
       # Baseline: Ruby-internal threads present BEFORE the factory (GC, finalizers)
       # — subtracting it removes the flakiness the story warns about.
       baseline = Thread.list.size
-      client = ConvertSdk.create(data: { "data" => { "account_id" => "a", "project_id" => "p" } })
+      client = ConvertSdk.create(data: {})
       delta = Thread.list.size - baseline
 
       expect(client).to be_a(ConvertSdk::Client)
@@ -90,7 +90,7 @@ RSpec.describe "Fork safety integration (Story 4.4)" do
 
   describe "AC#4 — postfork delegates to the same re-arm path" do
     it "(d) Client#postfork invokes ForkGuard.rearm! (spy)" do
-      client = ConvertSdk.create(data: { "data" => { "account_id" => "a", "project_id" => "p" } })
+      client = ConvertSdk.create(data: {})
 
       expect(ConvertSdk::ForkGuard).to receive(:rearm!).and_call_original
       client.postfork
@@ -121,7 +121,7 @@ RSpec.describe "Fork safety integration (Story 4.4)" do
       # is false — the same value JRuby always returns. The at_exit guard
       # (Process.pid == registered_pid) is correspondingly always true.
       expect(ConvertSdk::ForkGuard.forked?).to be(false)
-      client = ConvertSdk.create(data: { "data" => { "account_id" => "a", "project_id" => "p" } })
+      client = ConvertSdk.create(data: {})
       expect(client.instance_variable_get(:@at_exit_pid)).to eq(Process.pid)
     end
   end
@@ -149,7 +149,7 @@ RSpec.describe "Fork safety integration (Story 4.4)" do
   def at_exit_probe_script
     <<~RUBY
       require "convert_sdk"
-      client = ConvertSdk.create(data: { "data" => { "account_id" => "a", "project_id" => "p" } })
+      client = ConvertSdk.create(data: {})
       # Replace release_queue so the flush leaves observable evidence tagged by role.
       role = "parent"
       client.api_manager.define_singleton_method(:release_queue) do |reason = nil|
