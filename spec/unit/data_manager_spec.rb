@@ -24,11 +24,12 @@ RSpec.describe ConvertSdk::DataManager do
   end
   let(:manager) { described_class.new(log_manager: log_manager) }
 
-  # The vendored config envelope (string keys, exactly the wire shape).
+  # The vendored flat config (string keys, exactly the wire shape).
   let(:config) do
     JSON.parse(File.read(File.expand_path("../fixtures/test-config.json", __dir__)))
   end
-  let(:data) { config["data"] }
+  # After the flat-shape fix, entities live at the config root (no "data" wrapper).
+  let(:data) { config }
 
   # A manager with the vendored config already installed.
   def installed

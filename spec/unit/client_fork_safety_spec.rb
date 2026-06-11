@@ -10,7 +10,7 @@ require "spec_helper"
 RSpec.describe "Client fork safety (Story 4.4)" do
   let(:sink) { CapturingSink.new }
   let(:log_manager) { ConvertSdk::LogManager.new(level: ConvertSdk::LogLevel::TRACE, sink: sink) }
-  let(:config) { ConvertSdk::Config.new(data: { "data" => {} }, config_endpoint: HttpStubs::CONFIG_HOST) }
+  let(:config) { ConvertSdk::Config.new(data: {}, config_endpoint: HttpStubs::CONFIG_HOST) }
 
   before { reset_fork_guard! }
   after { reset_fork_guard! }

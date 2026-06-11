@@ -100,12 +100,12 @@ module ForkHelpers
     http_client = RecordingHttpClient.new
     event_manager = ConvertSdk::EventManager.new(log_manager: log_manager)
     config = ConvertSdk::Config.new(
-      data: { "data" => { "account_id" => "acc", "project_id" => "proj" } },
+      data: { "account_id" => "acc", "project" => { "id" => "proj" } },
       sdk_key: "sdk-key-1", track_endpoint: "https://track.example/[project_id]/v1",
       event_batch_size: 100, flush_interval: flush_interval
     )
     data_manager = ConvertSdk::DataManager.new(log_manager: log_manager)
-    data_manager.install_config({ "data" => { "account_id" => "acc", "project_id" => "proj" } })
+    data_manager.install_config({ "account_id" => "acc", "project" => { "id" => "proj" } })
     manager = ConvertSdk::ApiManager.new(
       config: config, data_manager: data_manager, http_client: http_client,
       event_manager: event_manager, log_manager: log_manager

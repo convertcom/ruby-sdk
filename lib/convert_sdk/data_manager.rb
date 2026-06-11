@@ -18,19 +18,21 @@ module ConvertSdk
   #
   # == No raw config hash crosses the boundary
   #
-  # The parsed config envelope is wrapped here and exposed ONLY through
-  # hand-written reader methods (+#experiences+, +#feature_by_key(key)+, …) that
-  # return frozen sub-hashes / arrays. There is no public accessor for the raw
-  # snapshot and no OpenAPI codegen — the reader inventory is derived by hand
-  # from the actual config wire shape (the vendored +test-config.json+ fixture).
+  # The parsed config snapshot is exposed ONLY through hand-written reader methods
+  # (+#experiences+, +#feature_by_key(key)+, …) that return frozen sub-hashes /
+  # arrays. There is no public accessor for the raw snapshot and no OpenAPI codegen
+  # — the reader inventory is derived by hand from the actual config wire shape
+  # (the vendored +test-config.json+ fixture).
   #
-  # == Wire shape
+  # == Wire shape (flat/root — JS/PHP/Android parity)
   #
-  # The config envelope is +{"environment" => ..., "data" => {...}}+; the entity
-  # collections (+experiences+, +features+, +goals+, +audiences+, +segments+,
-  # optional +locations+) plus +account_id+ and the +project+ sub-hash live under
-  # +"data"+. +#project_id+ is +data.project.id+. Readers tolerate sparse or
-  # absent keys (return +nil+ / +[]+) so a partial config never crashes a reader.
+  # Entities live at the ROOT of the config snapshot: +account_id+, +project+,
+  # +experiences+, +features+, +goals+, +audiences+, +segments+,
+  # +archived_experiences+, and optional +locations+. +#project_id+ is
+  # +root["project"]["id"]+. This matches the live endpoint shape (no +"data"+
+  # wrapper), the JS SDK, the PHP SDK, and the Android OpenAPI-generated schema.
+  # Readers tolerate sparse or absent keys (return +nil+ / +[]+) so a partial
+  # config never crashes a reader.
   #
   # == Degrade-gracefully (NFR12)
   #
@@ -138,8 +140,8 @@ module ConvertSdk
     # marker, so exactly one install in the manager's lifetime is +:first+ even
     # under concurrent installs.
     #
-    # @param hash [Hash{String=>Object}] the parsed config envelope
-    #   (+{"environment" => ..., "data" => {...}}+).
+    # @param hash [Hash{String=>Object}] the parsed flat config snapshot
+    #   (entities at the root — +account_id+, +project+, +experiences+, etc.).
     # @return [Symbol, false] +:first+ on the first successful install,
     #   +:updated+ on any subsequent install, or +false+ when the argument was
     #   rejected (non-Hash) and no swap happened.
@@ -223,9 +225,12 @@ module ConvertSdk
       (@clock.call - fetched_at) > effective_ttl
     end
 
-    # @return [Boolean] true once a config snapshot has been installed.
+    # @return [Boolean] true once a USABLE config (account_id + project present)
+    #   is installed. Mirrors JS SDK's +configAvailable+ check. A snapshot that
+    #   lacks the load-bearing fields (e.g. an empty or malformed body) is NOT
+    #   considered available — avoids silently serving nil reads to decision paths.
     def config_available?
-      !@config.nil?
+      !account_id.nil? && !project.nil?
     end
 
     # @return [String, nil] the account id (+data.account_id+), or nil pre-config.
@@ -856,13 +861,14 @@ module ConvertSdk
       @ttl || ConvertSdk::DEFAULT_CONFIG_TTL
     end
 
-    # The frozen +"data"+ sub-hash of the live snapshot, or nil pre-config.
-    # Read lock-free: @config is either nil or a fully-frozen graph.
+    # The live snapshot root (entities live at the root — JS/PHP/Android parity),
+    # or nil pre-config. Read lock-free: @config is either nil or a fully-frozen
+    # graph.
     def data
-      @config&.fetch("data", nil)
+      @config
     end
 
-    # Fetch a frozen collection under +"data"+, defaulting to a frozen empty
+    # Fetch a frozen collection at the config root, defaulting to a frozen empty
     # array when the snapshot or the key is absent.
     def collection(name)
       found = data&.fetch(name, nil)

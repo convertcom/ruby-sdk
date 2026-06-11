@@ -103,13 +103,13 @@ RSpec.describe ConvertSdk::ExperienceManager do
       },
       "archived experience" => {
         mutate: lambda { |cfg|
-          cfg["data"]["archived_experiences"] = [100_218_245]
+          cfg["archived_experiences"] = [100_218_245]
         },
         key: nil, sentinel: ConvertSdk::RuleError::NO_DATA_FOUND, log: "archived"
       },
       "environment mismatch" => {
         mutate: lambda { |cfg|
-          cfg["data"]["experiences"][0]["environment"] = "live"
+          cfg["experiences"][0]["environment"] = "live"
         },
         key: nil, sentinel: ConvertSdk::RuleError::NO_DATA_FOUND, log: "environment",
         attrs: { environment: "staging" }
@@ -121,7 +121,7 @@ RSpec.describe ConvertSdk::ExperienceManager do
       },
       "zero traffic (no variation decided)" => {
         mutate: lambda { |cfg|
-          cfg["data"]["experiences"][0]["variations"].each { |v| v["traffic_allocation"] = 0.0 }
+          cfg["experiences"][0]["variations"].each { |v| v["traffic_allocation"] = 0.0 }
         },
         key: nil, sentinel: ConvertSdk::BucketingError::VARIATION_NOT_DECIDED, log: "bucket"
       }
@@ -150,7 +150,7 @@ RSpec.describe ConvertSdk::ExperienceManager do
   describe "step ORDER proof — early exit skips later steps (AC#1)" do
     it "an archived experience never reaches audience/rule evaluation" do
       cfg = stringify(ConfigFixture.config)
-      cfg["data"]["archived_experiences"] = [100_218_245]
+      cfg["archived_experiences"] = [100_218_245]
       dm = ConvertSdk::DataManager.new(
         log_manager: log_manager, data_store_manager: data_store_manager,
         bucketing_manager: bucketing_manager, rule_manager: rule_manager,
@@ -183,8 +183,8 @@ RSpec.describe ConvertSdk::ExperienceManager do
   describe "empty locations / no site_area restriction (AC#4)" do
     it "treats an experience with no locations and no site_area as unrestricted" do
       cfg = stringify(ConfigFixture.config)
-      cfg["data"]["experiences"][0].delete("site_area")
-      cfg["data"]["experiences"][0].delete("locations")
+      cfg["experiences"][0].delete("site_area")
+      cfg["experiences"][0].delete("locations")
       dm = ConvertSdk::DataManager.new(
         log_manager: log_manager, data_store_manager: data_store_manager,
         bucketing_manager: bucketing_manager, rule_manager: rule_manager,

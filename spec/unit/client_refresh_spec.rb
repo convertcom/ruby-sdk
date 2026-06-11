@@ -38,9 +38,9 @@ RSpec.describe "ConvertSdk::Client config refresh (Story 2.7)" do
     "convert_sdk.config.#{sdk_key}"
   end
 
-  # A second config body distinct from the vendored one, to assert a swap.
+  # A second flat config body distinct from the vendored one, to assert a swap.
   def updated_config
-    { "environment" => "production", "data" => { "account_id" => "ACCT-2", "experiences" => [] } }
+    { "account_id" => "ACCT-2", "project" => { "id" => "P-2" }, "experiences" => [] }
   end
 
   describe "Task 1 — config cache in the storage port (AC#1)" do
@@ -50,7 +50,7 @@ RSpec.describe "ConvertSdk::Client config refresh (Story 2.7)" do
       entry = client.instance_variable_get(:@data_store_manager).get(config_key)
       expect(entry).to be_a(Hash)
       expect(entry["config"]).to be_a(Hash)
-      expect(entry["config"]["data"]["account_id"]).to eq("10022898")
+      expect(entry["config"]["account_id"]).to eq("10022898")
     end
 
     it "records a fetched-at wall-clock timestamp alongside the cached config" do
