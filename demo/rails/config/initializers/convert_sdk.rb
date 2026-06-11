@@ -83,7 +83,7 @@ if (lvl = ENV["CONVERT_LOG_LEVEL"].to_s.strip.downcase).length.positive?
 end
 
 if CONVERT_DEMO_OFFLINE
-  # Direct-data mode: hand the WHOLE parsed config envelope to `create(data:)` —
+  # Direct-data mode: hand the WHOLE parsed flat config to `create(data:)` —
   # no sdk_key, ZERO HTTP. Timers stay OFF so each /demo request flushes
   # synchronously and the decision is fully deterministic with no background
   # thread (NFR4). The committed fixture is already string-keyed JSON; parse and

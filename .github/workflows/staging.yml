@@ -31,6 +31,13 @@ jobs:
   staging:
     name: ":staging suite (${{ matrix.variant }})"
     runs-on: ubuntu-latest
+    # DISABLE_COVERAGE: this job runs only the :staging-tagged subset (the live
+    # schema-drift + delivery + NFR5 gates) and is independent of coverage —
+    # coverage is enforced by qa.yml's full-suite `test` job. Opting out stops the
+    # global 85% line gate from being applied to this deliberately-narrow subset
+    # (a dozen live specs cannot exercise 85% of the SDK; see spec/spec_helper.rb).
+    env:
+      DISABLE_COVERAGE: "1"
     # The :staging suite at TRACE proves zero secret leakage live (NFR5). The
     # with-secret variant authenticates Bearer-style using an AUTHENTICATED key;
     # the without-secret variant exercises the public-key (no-secret) auth path

@@ -84,6 +84,24 @@ To see the SDK's internal decisioning lines on stdout, boot with
 CONVERT_LOG_LEVEL=trace bundle exec puma -C config/puma.rb
 ```
 
+### Stop it
+
+The Puma **cluster master** runs until it receives a signal — it does **not** stop
+when you close the terminal. Stop it the way you started it:
+
+| You started it with | Stop it with |
+|---------------------|--------------|
+| `bundle exec puma …` in the **foreground** | **`Ctrl-C`** — sends `SIGINT` to the master, which gracefully stops both workers and frees the port. |
+| `docker compose up` | **`Ctrl-C`**, then `docker compose down` to remove the container. |
+| a **backgrounded or orphaned** process still holding the port | `lsof -ti tcp:3000 \| xargs kill` — finds every PID bound to `3000` (master + both workers) and stops them. |
+
+> **Why this bites:** if you background the server (or close the terminal without
+> `Ctrl-C`), the workers keep `tcp://0.0.0.0:3000` bound, and the **next**
+> `bundle exec puma` dies with **`Address already in use`** (the very failure
+> `config/puma.rb` warns about). Stopping the master reaps the workers and frees
+> the port. Confirm it's free with `lsof -iTCP:3000 -sTCP:LISTEN` — **no output
+> means free**.
+
 ### Per-URL verification table (OFFLINE mode, fixed visitor id `visitor-1`)
 
 OFFLINE bucketing is **deterministic** — these exact values reproduce on every
