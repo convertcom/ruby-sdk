@@ -96,7 +96,7 @@ RSpec.describe "Sticky bucketing decision flow" do
     # Make the experience's audience PERMANENT so it is skipped once bucketed.
     def permanent_config
       cfg = stringify(ConfigFixture.config)
-      cfg["data"]["audiences"].each { |a| a["type"] = "permanent" }
+      cfg["audiences"].each { |a| a["type"] = "permanent" }
       cfg
     end
 

@@ -86,12 +86,9 @@ RSpec.describe ConvertSdk::FeatureManager do
   end
 
   def local_cast_config
-    { "environment" => "live",
-      "data" => {
-        "account_id" => "10022898", "project" => { "id" => "10025986" },
-        "audiences" => [], "segments" => [], "goals" => [],
-        "features" => [local_cast_feature], "experiences" => [local_cast_experience]
-      } }
+    { "account_id" => "10022898", "project" => { "id" => "10025986" },
+      "audiences" => [], "segments" => [], "goals" => [],
+      "features" => [local_cast_feature], "experiences" => [local_cast_experience] }
   end
 
   # The visitor + attributes combination that buckets into BOTH

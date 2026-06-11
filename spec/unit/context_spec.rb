@@ -539,7 +539,7 @@ RSpec.describe ConvertSdk::Context do
     # the enqueued event is inspected by draining the underlying queue.
     let(:api_manager) do
       cfg = ConvertSdk::Config.new(
-        data: ConfigFixture.config["data"], sdk_key: "sdk-key-1",
+        data: ConfigFixture.config, sdk_key: "sdk-key-1",
         track_endpoint: "https://track.example.test/[project_id]/v1",
         flush_interval: nil, log_manager: log_manager
       )

@@ -18,7 +18,7 @@ RSpec.describe ConvertSdk::ApiManager do
 
   def build_api_manager(secret: nil, event_batch_size: 10, flush_interval: nil)
     config = ConvertSdk::Config.new(
-      data: vendored["data"],
+      data: vendored,
       sdk_key: "sdk-key-1",
       sdk_key_secret: secret,
       track_endpoint: track_endpoint,

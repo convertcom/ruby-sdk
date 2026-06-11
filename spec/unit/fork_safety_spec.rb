@@ -29,7 +29,7 @@ RSpec.describe "Fork-safety composition (Story 4.4)" do
 
   def build_api_manager(flush_interval: nil)
     config = ConvertSdk::Config.new(
-      data: vendored["data"], sdk_key: "sdk-key-1", track_endpoint: track_endpoint,
+      data: vendored, sdk_key: "sdk-key-1", track_endpoint: track_endpoint,
       event_batch_size: 100, flush_interval: flush_interval
     )
     ConvertSdk::ApiManager.new(
