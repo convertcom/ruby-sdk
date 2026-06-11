@@ -82,7 +82,7 @@ module RuntimeRecipeHelpers
     RUBY
   }.freeze
 
-  # The vendored realistic config envelope (test-config.json) — the recipe clients
+  # The vendored realistic flat root config (test-config.json) — the recipe clients
   # run direct-data so no config HTTP is needed.
   def recipe_config_data
     @recipe_config_data ||=
