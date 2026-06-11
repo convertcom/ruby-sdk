@@ -233,17 +233,17 @@ module ConvertSdk
       !account_id.nil? && !project.nil?
     end
 
-    # @return [String, nil] the account id (+data.account_id+), or nil pre-config.
+    # @return [String, nil] the account id (+account_id+ at the config root), or nil pre-config.
     def account_id
       data&.fetch("account_id", nil)
     end
 
-    # @return [String, nil] the project id (+data.project.id+), or nil pre-config.
+    # @return [String, nil] the project id (+project.id+ at the config root), or nil pre-config.
     def project_id
       project&.fetch("id", nil)
     end
 
-    # @return [Hash, nil] the frozen +data.project+ sub-hash, or nil pre-config.
+    # @return [Hash, nil] the frozen +project+ sub-hash at the config root, or nil pre-config.
     def project
       data&.fetch("project", nil)
     end

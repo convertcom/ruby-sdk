@@ -89,18 +89,18 @@ module HttpStubs
     { "experiences" => {}, "audiences" => {}, "_meta" => { "ok" => true } }
   end
 
-  # The vendored realistic config envelope (Story 1.2's +test-config.json+),
-  # parsed to a string-keyed Hash. This is the actual wire shape the Client
-  # installs and the DataManager readers are derived from — use it whenever a
-  # spec needs a config fetch to return a representative project config.
+  # The vendored realistic config (Story 1.2's +test-config.json+), parsed to a
+  # string-keyed Hash. This is the flat root config shape the Client installs and
+  # the DataManager readers are derived from — use it whenever a spec needs a
+  # config fetch to return a representative project config.
   #
-  # @return [Hash{String=>Object}] the parsed +test-config.json+ envelope.
+  # @return [Hash{String=>Object}] the parsed +test-config.json+ flat root config.
   def vendored_config
     JSON.parse(File.read(File.expand_path("../fixtures/test-config.json", __dir__)))
   end
 
   # Stub +GET {CONFIG_HOST}/config/{sdk_key}+ serving the vendored realistic
-  # config envelope (Story 2.5 Client fetch path). The +environment+ query
+  # flat root config (Story 2.5 Client fetch path). The +environment+ query
   # parameter, when the Client appends one, still matches (WebMock matches the
   # path; the capture block records the full URI for assertions).
   #
