@@ -225,12 +225,13 @@ module ConvertSdk
       (@clock.call - fetched_at) > effective_ttl
     end
 
-    # @return [Boolean] true once a USABLE config (account_id + project present)
-    #   is installed. Mirrors JS SDK's +configAvailable+ check. A snapshot that
-    #   lacks the load-bearing fields (e.g. an empty or malformed body) is NOT
-    #   considered available — avoids silently serving nil reads to decision paths.
+    # @return [Boolean] true once a USABLE config (account_id + project.id both
+    #   present) is installed. Mirrors JS SDK's +isValidConfigData+ check
+    #   (+account_id && project.id+). A snapshot that carries a +project+ key but
+    #   no id (e.g. +project: {}+) or a malformed +project+ value is NOT considered
+    #   available — avoids silently serving nil reads to decision paths.
     def config_available?
-      !account_id.nil? && !project.nil?
+      !account_id.nil? && !project_id.nil?
     end
 
     # @return [String, nil] the account id (+account_id+ at the config root), or nil pre-config.
@@ -239,8 +240,13 @@ module ConvertSdk
     end
 
     # @return [String, nil] the project id (+project.id+ at the config root), or nil pre-config.
+    #   Type-safe against a non-Hash +project+ value (e.g. a String in a malformed
+    #   direct-data config): +&.+ guards nil only; a non-nil non-Hash would raise
+    #   NoMethodError on +#fetch+. Mirrors JS optional-chaining safety
+    #   (+data?.project?.id+).
     def project_id
-      project&.fetch("id", nil)
+      p = project
+      p.is_a?(Hash) ? p.fetch("id", nil) : nil
     end
 
     # @return [Hash, nil] the frozen +project+ sub-hash at the config root, or nil pre-config.
