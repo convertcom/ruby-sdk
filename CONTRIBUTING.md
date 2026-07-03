@@ -73,7 +73,7 @@ runs on CRuby only — the JRuby leg runs the suite without the gate.
 |-----------|------------------|
 | `spec/unit/` | Per-class unit specs (mock collaborators, isolated logic). |
 | `spec/integration/` | End-to-end specs: `full_chain_spec.rb` (the release-blocking create→decide→track→flush loop), `runtime_recipes_spec.rb` (the runtime-lifecycle recipes the quickstarts are transcribed from), `fork_safety_spec.rb`, `factory_wiring_spec.rb`. |
-| `spec/cross_sdk/` | The cross-SDK MurmurHash3 parity vectors (the byte-identical bucketing proof). |
+| `spec/cross_sdk/` | The cross-SDK parity proofs: MurmurHash3 hash vectors and the anchored bucketing layout vectors (`anchored_bucketing_vectors_spec.rb`) — the byte-identical bucketing proof. |
 | `spec/docs/` | Docs-snippet smoke specs — run the README/quickstart code samples against the real gem so documentation never drifts. |
 | `spec/staging/` | The live-platform suite (runs on schedule/dispatch only, never in PR CI). |
 | `spec/support/` | Shared helpers (e.g. `runtime_recipe_helpers.rb`, which co-locates the recipe wiring snippets the quickstarts ship). |
