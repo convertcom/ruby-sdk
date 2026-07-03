@@ -32,6 +32,19 @@ RSpec.describe ConvertSdk::BucketingManager do
     ((hash / 4_294_967_296.0) * max_traffic).to_i
   end
 
+  # Anchored-layout variation-config builder: {id, traffic_allocation, status}.
+  # Mirrors the golden-vector fixture's variation shape (spec/fixtures/cross_sdk/
+  # cross-sdk-bucketing-vectors.json — qs-01 anchored bucketing layout) so
+  # hand-built scenarios below stay structurally identical to the vendored
+  # vectors. Omitting +ta+ (the default +:absent+ sentinel) mirrors an absent
+  # +traffic_allocation+ field on the wire (NaN/absent -> 100.0 default, AC5).
+  def variation(variation_id, allocation = :absent, status: nil)
+    v = { "id" => variation_id }
+    v["traffic_allocation"] = allocation unless allocation == :absent
+    v["status"] = status if status
+    v
+  end
+
   describe "#value_visitor_based" do
     # Tabular vector cases: each pair is bucketed via the public method and
     # checked against the independently-derived formula value.
@@ -216,6 +229,176 @@ RSpec.describe ConvertSdk::BucketingManager do
         buckets = { "a" => 50, "b" => 50 }
         expect(lean.bucket_for_visitor(buckets, "visitor-7", experience_id: "exp-1"))
           .to eq(manager.bucket_for_visitor(buckets, "visitor-7", experience_id: "exp-1"))
+      end
+    end
+  end
+
+  # Anchored bucketing layout (qs-01, bucketing contract v12 — RED phase).
+  #
+  # #select_bucket_anchored is the anchored-layout counterpart of #select_bucket:
+  # given the FULL ordered variation list (active AND inactive/stopped arms) and
+  # an already-computed bucket +value+, it resolves the covering variation or
+  # +nil+. It is a NEW method — the packed #select_bucket is untouched and stays
+  # the version<=11 walk.
+  #
+  # Per the spec (qs-01 "The contract"):
+  #   allocation = ta.is_a?(Numeric) ? ta.to_f : 100.0
+  #   active     = (status.nil? ? true : status == "running") && (allocation > 0)
+  #   total_weight = sum(allocation) over ALL entries (active AND inactive)
+  #   return nil if total_weight <= 0
+  #   cum = 0.0
+  #   each entry: anchor = (cum / total_weight) * 10000
+  #               width  = active ? allocation * 100 : 0
+  #               hit iff anchor <= value < anchor + width
+  #               cum += allocation
+  #   no hit -> nil
+  #
+  # None of these examples invent magic numbers: every scenario either derives
+  # the anchor/width from the formula above by hand (boundaries kept small and
+  # exact — single/double-arm cases) or is copied verbatim from a golden vector
+  # in cross-sdk-bucketing-vectors.json (stopped-arm-stability, ta-zero-width).
+  describe "#select_bucket_anchored" do
+    describe "AC5 — boundaries: value == anchor is IN, value == anchor + width is OUT" do
+      # Single arm at 50%: anchor 0, width 5000 -> band [0, 5000).
+      let(:single_arm) { [variation("O", 50, status: "running")] }
+
+      { 0 => "O", 4_999 => "O", 5_000 => nil }.each do |value, expected|
+        it "value=#{value} -> #{expected.inspect}" do
+          expect(manager.select_bucket_anchored(single_arm, value)).to eq(expected)
+        end
+      end
+    end
+
+    describe "boundary on a NON-FIRST anchor (cumulative weight > 0)" do
+      # Two equal arms: O anchor 0 width 5000; V1 anchor 5000 width 5000.
+      let(:two_arms) { [variation("O", 50, status: "running"), variation("V1", 50, status: "running")] }
+
+      { 4_999 => "O", 5_000 => "V1", 9_999 => "V1" }.each do |value, expected|
+        it "value=#{value} -> #{expected}" do
+          expect(manager.select_bucket_anchored(two_arms, value)).to eq(expected)
+        end
+      end
+    end
+
+    describe "AC5 — NaN/absent traffic_allocation defaults to 100.0 weight" do
+      # B (ta=5, weight 5) is listed FIRST so its fixed [0,500) band is checked
+      # before A (ta absent). total_weight = 5 + 100 = 105, so A's anchor sits
+      # at (5/105)*10000 ~= 476.19 with a width of 100*100 = 10000 -- if the
+      # spec's "absent -> 100.0" default were wrong (e.g. treated as 0), A would
+      # never be reachable at all.
+      let(:variations) { [variation("B", 5, status: "running"), variation("A")] }
+
+      it "keeps B's own fixed band ahead of A (first-match-in-order)" do
+        expect(manager.select_bucket_anchored(variations, 0)).to eq("B")
+        expect(manager.select_bucket_anchored(variations, 499)).to eq("B")
+      end
+
+      it "admits A once B's fixed band ends, proving A's weight defaulted to 100 (not 0)" do
+        expect(manager.select_bucket_anchored(variations, 500)).to eq("A")
+        expect(manager.select_bucket_anchored(variations, 9_999)).to eq("A")
+      end
+    end
+
+    describe "AC5 — total_weight <= 0 is never bucketed" do
+      let(:all_zero) { [variation("O", 0, status: "running"), variation("V1", 0, status: "stopped")] }
+
+      it "returns nil for any value when every entry has zero (or negative) weight" do
+        [0, 1, 5_000, 9_999].each do |value|
+          expect(manager.select_bucket_anchored(all_zero, value)).to be_nil
+        end
+      end
+    end
+
+    describe "AC4 — a stopped arm keeps its weight but gets zero width; other anchors are untouched" do
+      # O=10/V1=80(stopped)/V2=10 -- the EXACT config from the golden
+      # stopped-arm-stability vectors (experience 900000001). O:[0,1000)
+      # V1: anchor 1000, width 0 (dead point) V2:[9000,10000).
+      let(:variations) do
+        [variation("O", 10, status: "running"), variation("V1", 80, status: "stopped"),
+         variation("V2", 10, status: "running")]
+      end
+
+      { 999 => "O", 1_000 => nil, 8_999 => nil, 9_000 => "V2", 9_999 => "V2" }.each do |value, expected|
+        it "value=#{value} -> #{expected.inspect}" do
+          expect(manager.select_bucket_anchored(variations, value)).to eq(expected)
+        end
+      end
+    end
+
+    describe "AC4/AC5 — an EXPLICIT traffic_allocation: 0 is zero width, never defaulted to 100" do
+      # O=2/V1=47/Z=0(explicit)/V2=1 -- the EXACT config from the golden
+      # ta-zero-width vectors. Z's weight is 0 (never 100), so it never perturbs
+      # V1's or V2's anchors and can never itself be selected. cum after O+V1 is
+      # 49, so BOTH Z and V2 anchor at (49/50)*10000 = 9800; V2's width is
+      # 1*100 = 100, giving it a tight [9800, 9900) band immediately after V1.
+      let(:variations) do
+        [variation("O", 2, status: "running"), variation("V1", 47, status: "running"),
+         variation("Z", 0, status: "running"), variation("V2", 1, status: "running")]
+      end
+
+      it "never selects Z regardless of value" do
+        (0..9_999).step(1_111).each do |value|
+          expect(manager.select_bucket_anchored(variations, value)).not_to eq("Z")
+        end
+      end
+
+      it "gives V2 a tight [9800, 9900) band immediately after V1 (Z contributed zero weight)" do
+        expect(manager.select_bucket_anchored(variations, 9_800)).to eq("V2")
+        expect(manager.select_bucket_anchored(variations, 9_899)).to eq("V2")
+        expect(manager.select_bucket_anchored(variations, 9_900)).not_to eq("V2")
+      end
+    end
+
+    it "returns nil for an empty variation list" do
+      expect(manager.select_bucket_anchored([], 0)).to be_nil
+    end
+  end
+
+  # #bucket_for_visitor_anchored composes #value_visitor_based +
+  # #select_bucket_anchored, mirroring #bucket_for_visitor's shape exactly
+  # (AC9 — no return-shape drift): {variation_id:, bucketing_allocation:} or nil.
+  describe "#bucket_for_visitor_anchored" do
+    # O=10/V1=80(stopped)/V2=10 -- the EXACT config + visitor ids from the golden
+    # stopped-arm-stability vectors (experience 900000001), so the expectations
+    # below are read off the vendored fixture, never invented.
+    let(:variations) do
+      [variation("O", 10, status: "running"), variation("V1", 80, status: "stopped"),
+       variation("V2", 10, status: "running")]
+    end
+    let(:experience_id) { "900000001" }
+
+    it "returns the same {variation_id:, bucketing_allocation:} shape as #bucket_for_visitor (AC9)" do
+      result = manager.bucket_for_visitor_anchored(variations, "anchor-gate-visitor-106", experience_id: experience_id)
+      expect(result.keys).to contain_exactly(:variation_id, :bucketing_allocation)
+    end
+
+    it "matches the golden vector for this exact config (anchor-gate-visitor-106 -> O)" do
+      result = manager.bucket_for_visitor_anchored(variations, "anchor-gate-visitor-106", experience_id: experience_id)
+      expect(result[:variation_id]).to eq("O")
+    end
+
+    it "matches the golden vector for this exact config (anchor-gate-visitor-162 -> V2, unaffected by V1's stop)" do
+      result = manager.bucket_for_visitor_anchored(variations, "anchor-gate-visitor-162", experience_id: experience_id)
+      expect(result[:variation_id]).to eq("V2")
+    end
+
+    it "carries the SAME bucket value #value_visitor_based would compute (no hashing drift)" do
+      value = manager.value_visitor_based("anchor-gate-visitor-106", experience_id: experience_id)
+      result = manager.bucket_for_visitor_anchored(variations, "anchor-gate-visitor-106", experience_id: experience_id)
+      expect(result[:bucketing_allocation]).to eq(value)
+    end
+
+    it "returns nil when no band covers the visitor's value" do
+      empty = [variation("O", 0, status: "running")]
+      expect(manager.bucket_for_visitor_anchored(empty, "anyone", experience_id: "exp")).to be_nil
+    end
+
+    it "is deterministic across instances for the same inputs" do
+      other = described_class.new(config: config, log_manager: log_manager)
+      5.times do |i|
+        vid = "visitor-#{i}"
+        expect(manager.bucket_for_visitor_anchored(variations, vid, experience_id: experience_id))
+          .to eq(other.bucket_for_visitor_anchored(variations, vid, experience_id: experience_id))
       end
     end
   end
