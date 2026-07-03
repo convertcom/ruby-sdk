@@ -224,18 +224,26 @@ module ConvertSdk
       end
     end
 
-    # +ta.to_f+ when +ta+ is a genuine Integer/Float, else the JS +isNaN+
-    # default of +100.0+ (NaN/absent -> full-allocation weight, AC5). Narrowed
-    # via +case+/+when+ (rather than +ta.is_a?(Numeric) ? ta.to_f+) because RBS
-    # core's abstract +Numeric+ does not declare +#to_f+ — only its concrete
-    # +Integer+/+Float+ subclasses do.
+    # Mirrors the JS +isNaN(ta) ? 100.0 : Number(ta)+ mapping
+    # (data-manager.ts:594-601) via +Float(x, exception: false)+ coercion: a
+    # numeric-looking String (e.g. +"50"+) coerces to its numeric weight
+    # exactly like the JS oracle's +Number()+, not just a genuine
+    # Integer/Float. A genuinely non-numeric value, +nil+, or an absent field
+    # coerces to +nil+ and defaults to +100.0+ (full-allocation weight, AC5) —
+    # RBS core types +Float(untyped, exception: false)+ as +Float?+, so the
+    # nil-check both implements the JS default and narrows the return to the
+    # declared +-> Float+.
+    #
+    # Hard boundary (documented, not fixable in Ruby): +JSON.parse+ collapses
+    # an explicit JSON +null+ +traffic_allocation+ and an ABSENT field to the
+    # same Ruby +nil+, so this SDK cannot reproduce JS's split (JS: absent ->
+    # +undefined+ -> +isNaN+ -> 100.0/active; explicit +null+ ->
+    # +Number(null)+ is +0+ -> 0/inactive). We match JS for the served/tested
+    # case (absent -> 100.0/active); explicit-null +traffic_allocation+ is
+    # never served (0 occurrences in the 59-vector golden fixture).
     def anchored_allocation(traffic_allocation)
-      case traffic_allocation
-      when Integer, Float
-        traffic_allocation.to_f
-      else
-        100.0
-      end
+      coerced = Float(traffic_allocation, exception: false)
+      coerced.nil? ? 100.0 : coerced
     end
 
     # +true+ when the variation is eligible for a non-zero anchored width: a

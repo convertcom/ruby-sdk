@@ -78,15 +78,17 @@ RSpec.describe "Cross-SDK anchored bucketing layout parity (contract v12)" do
     end
   end
 
-  describe 'AC1 — gate branching on experience["version"]\'s TYPE, not just its numeric value' do
+  describe "AC1 — gate branching mirrors the JS oracle's Number(version) > 11 coercion" do
     # Reuse a REAL golden vector's config (experience 900000001, thirds 15%:
     # O/V1/V2 @ 5% each) whose packed (v11) and anchored (v12) answers are
     # PROVEN to diverge for this exact visitor by the fixture itself: v11 ->
     # "V1" (packed band [500,1000) covers bucket value 601); v12 -> not
     # bucketed (anchored band [3333.33,3833.33) misses value 601). Found from
-    # the fixture, never hand-copied. Any version that is NOT a Numeric > 11
-    # MUST take the packed branch and reproduce the v11 answer; any Numeric
-    # > 11 MUST take the anchored branch and reproduce the v12 answer.
+    # the fixture, never hand-copied. Any version whose JS `Number()` coercion
+    # is NOT > 11 (missing, genuinely non-numeric, or numerically <= 11) MUST
+    # take the packed branch and reproduce the v11 answer; any value whose
+    # `Number()` coercion IS > 11 (including a numeric STRING like "12") MUST
+    # take the anchored branch and reproduce the v12 answer.
     let(:base_vector) do
       vectors.find { |v| v["visitorId"] == "thirds-flip-V1-to-O-66" && v["version"] == 11 }
     end
@@ -102,8 +104,7 @@ RSpec.describe "Cross-SDK anchored bucketing layout parity (contract v12)" do
 
     {
       "missing (nil)" => nil,
-      "non-numeric string '12'" => "12",
-      "non-numeric string 'twelve'" => "twelve",
+      "genuinely non-numeric string 'twelve'" => "twelve",
       "exactly 11 (current production stamp)" => 11,
       "numeric but not greater than 11 (11.0)" => 11.0
     }.each do |label, version|
@@ -116,6 +117,7 @@ RSpec.describe "Cross-SDK anchored bucketing layout parity (contract v12)" do
 
     {
       "12 (Integer)" => 12,
+      "numeric string '12'" => "12",
       "11.5 (Float > 11)" => 11.5
     }.each do |label, version|
       it "routes #{label} to the ANCHORED layout (reproduces the v12 not-bucketed answer)" do

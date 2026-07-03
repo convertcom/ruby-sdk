@@ -241,8 +241,10 @@ RSpec.describe ConvertSdk::BucketingManager do
   # +nil+. It is a NEW method — the packed #select_bucket is untouched and stays
   # the version<=11 walk.
   #
-  # Per the spec (qs-01 "The contract"):
-  #   allocation = ta.is_a?(Numeric) ? ta.to_f : 100.0
+  # Per the spec (qs-01 "The contract"), mirroring the JS oracle's
+  # isNaN(ta) ? 100.0 : Number(ta) coercion (numeric STRINGS coerce, not just
+  # Integer/Float):
+  #   allocation = Float(ta, exception: false) || 100.0
   #   active     = (status.nil? ? true : status == "running") && (allocation > 0)
   #   total_weight = sum(allocation) over ALL entries (active AND inactive)
   #   return nil if total_weight <= 0
