@@ -39,6 +39,16 @@ module ConvertSdk
   #
   # @api private
   class BucketingManager
+    # Fixed anchor-scale constant for the ANCHORED bucketing layout (contract
+    # v12, qs-01). Unlike +max_traffic+ (config-supplied, used only to scale the
+    # visitor's HASH value in {#value_visitor_based}), the anchor/width scale for
+    # the anchored range walk is a FIXED module constant in the JS oracle
+    # (+bucketing-manager.ts:25+ +DEFAULT_MAX_TRAFFIC = 10000+) — never read from
+    # config. Named here (rather than an inline literal in {#select_bucket_anchored})
+    # so the constant stays traceable to its JS origin without conflating it with
+    # the per-config +@max_traffic+ used elsewhere in this class.
+    ANCHORED_MAX_TRAFFIC = 10_000
+
     # Build a bucketing engine bound to a {Config}'s frozen bucketing constants.
     #
     # @param config [Config] supplies +max_traffic+, +hash_seed+, +max_hash+.
@@ -129,6 +139,127 @@ module ConvertSdk
       return nil if selected.nil?
 
       { variation_id: selected, bucketing_allocation: value }
+    end
+
+    # Select the variation whose ANCHORED range contains +value+ (contract v12,
+    # qs-01/BUCK-2). Given the FULL ordered variation config list (active AND
+    # inactive/stopped arms — never pre-filtered), this folds the JS reference's
+    # +getBucketRanges+ + +selectBucketAnchored+ (bm.ts:145-190) into one pass so
+    # the method stays self-contained and independently unit-testable:
+    #
+    #   allocation = ta.is_a?(Numeric) ? ta.to_f : 100.0
+    #   active     = status_active(status) && allocation.positive?
+    #   total_weight = sum(allocation) over ALL entries (active AND inactive)
+    #   return nil if total_weight <= 0
+    #   cum = 0.0
+    #   each entry: anchor = (cum / total_weight) * ANCHORED_MAX_TRAFFIC
+    #               width  = active ? allocation * 100 : 0
+    #               hit iff anchor <= value < anchor + width (first match wins)
+    #               cum += allocation
+    #
+    # Inactive arms (stopped, or an explicit +traffic_allocation: 0+) keep their
+    # weight (anchor stability for the OTHER arms) but get zero width, so they
+    # can never themselves be selected. This is a DIFFERENT method from the
+    # packed {#select_bucket} — that packed walk is untouched for version<=11.
+    #
+    # @param variations [Array<Hash>] the FULL ordered variation config list
+    #   (+"id"+, +"traffic_allocation"+, +"status"+) — inactive arms included.
+    # @param value [Integer] a bucket value in +[0, ANCHORED_MAX_TRAFFIC)+.
+    # @return [String, nil] the selected variation id, or +nil+ (including when
+    #   +total_weight <= 0+ or the list is empty).
+    def select_bucket_anchored(variations, value)
+      entries = anchored_allocations(variations)
+      total_weight = entries.sum { |entry| entry[:allocation] }
+      variation = total_weight.positive? ? anchored_walk(entries, total_weight, value) : nil
+
+      @log_manager&.debug(
+        "BucketingManager#select_bucket_anchored: " \
+        "value=#{value} total_weight=#{total_weight} variation=#{variation.inspect}"
+      )
+      variation
+    end
+
+    # Resolve a visitor to a variation under the ANCHORED layout (contract v12),
+    # returning the SAME shape as {#bucket_for_visitor} (AC9 — no return-shape
+    # drift): +{variation_id:, bucketing_allocation:}+ or +nil+. Reuses the
+    # existing visitor-hash value unchanged (JS +getBucketForVisitorAnchored+,
+    # bm.ts:195-215) then resolves it through {#select_bucket_anchored}.
+    #
+    # @param variations [Array<Hash>] the FULL ordered variation config list
+    #   (active AND inactive arms) — see {#select_bucket_anchored}.
+    # @param visitor_id [#to_s] the visitor identifier.
+    # @param experience_id [String] the experience identifier (default +""+).
+    # @param seed [Integer] MurmurHash3 seed (default Config hash seed).
+    # @return [Hash{Symbol=>Object}, nil] +{variation_id:, bucketing_allocation:}+
+    #   or +nil+ (caller treats +nil+ as VARIATION_NOT_DECIDED).
+    def bucket_for_visitor_anchored(variations, visitor_id, experience_id: "", seed: @hash_seed)
+      value = value_visitor_based(visitor_id, experience_id: experience_id, seed: seed)
+      selected = select_bucket_anchored(variations, value)
+
+      @log_manager&.debug(
+        "BucketingManager#bucket_for_visitor_anchored: " \
+        "experience_id=#{experience_id.inspect} visitor_id=#{visitor_id.inspect} " \
+        "bucket_value=#{value} selected_variation_id=#{selected.inspect}"
+      )
+
+      return nil if selected.nil?
+
+      { variation_id: selected, bucketing_allocation: value }
+    end
+
+    private
+
+    # Build +{id:, allocation:, active:}+ entries from the raw ordered variation
+    # config list, mirroring the JS +_buildVariationAllocations+ mapping
+    # (data-manager.ts:591-610). Entries without an +"id"+ are skipped entirely
+    # (never counted in +total_weight+, never selectable) — defensive against a
+    # sparse/malformed config row, same tolerance the rest of the SDK applies.
+    def anchored_allocations(variations)
+      variations.each_with_object([]) do |variation, entries|
+        next unless variation.is_a?(Hash) && variation["id"]
+
+        allocation = anchored_allocation(variation["traffic_allocation"])
+        active = anchored_active?(variation["status"], allocation)
+        entries << { id: variation["id"], allocation: allocation, active: active }
+      end
+    end
+
+    # +ta.to_f+ when +ta+ is a genuine Integer/Float, else the JS +isNaN+
+    # default of +100.0+ (NaN/absent -> full-allocation weight, AC5). Narrowed
+    # via +case+/+when+ (rather than +ta.is_a?(Numeric) ? ta.to_f+) because RBS
+    # core's abstract +Numeric+ does not declare +#to_f+ — only its concrete
+    # +Integer+/+Float+ subclasses do.
+    def anchored_allocation(traffic_allocation)
+      case traffic_allocation
+      when Integer, Float
+        traffic_allocation.to_f
+      else
+        100.0
+      end
+    end
+
+    # +true+ when the variation is eligible for a non-zero anchored width: a
+    # +nil+/+""+ status defaults to running (JS +status ? status === RUNNING :
+    # true+, treating an empty string as falsy), AND the allocation is positive
+    # (an explicit +traffic_allocation: 0+ is inactive, never defaulted to 100).
+    def anchored_active?(status, allocation)
+      status_active = status.nil? || status == "" ? true : status == "running"
+      status_active && allocation.positive?
+    end
+
+    # Walk the anchored +entries+ in config order, returning the first entry
+    # whose half-open +[anchor, anchor + width)+ band contains +value+, or +nil+
+    # when no band covers it. +total_weight+ is guaranteed positive by the caller.
+    def anchored_walk(entries, total_weight, value)
+      cum = 0.0
+      entries.each do |entry|
+        anchor = (cum / total_weight) * ANCHORED_MAX_TRAFFIC
+        width = entry[:active] ? entry[:allocation] * 100 : 0
+        return entry[:id] if value >= anchor && value < anchor + width
+
+        cum += entry[:allocation]
+      end
+      nil
     end
   end
 end

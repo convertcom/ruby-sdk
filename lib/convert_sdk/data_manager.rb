@@ -566,8 +566,7 @@ module ConvertSdk
     # No covering bucket OR a drifted-out selected id -> VARIATION_NOT_DECIDED.
     def bucket_fresh(visitor_id, experience, attributes)
       experience_id = experience["id"].to_s
-      buckets = build_buckets(experience)
-      decision = @bucketing_manager&.bucket_for_visitor(buckets, visitor_id, experience_id: experience_id)
+      decision = fresh_bucketing_decision(visitor_id, experience, experience_id)
       variation_id = decision&.fetch(:variation_id, nil)
       variation = variation_id && retrieve_variation(experience, variation_id)
       if variation.nil?
@@ -578,6 +577,28 @@ module ConvertSdk
       persist_bucketing(visitor_id, experience_id, variation_id, attributes)
       @log_manager&.debug("DataManager#retrieve_bucketing: bucketed exp=#{experience_id} var=#{variation_id}")
       build_bucketed_variation(experience, variation, decision&.fetch(:bucketing_allocation, nil))
+    end
+
+    # qs-01 (bucketing contract v12) anchored-vs-packed GATE, dispatched on
+    # +experience["version"]+'s TYPE, not just its numeric value: a genuine
+    # +Numeric+ strictly greater than 11 runs the NEW anchored layout; a
+    # numeric-looking String does NOT count as anchored (accepted prior
+    # decision — matches the PHP sibling's choice, see qs-01 spec "The
+    # contract"). Missing / nil / non-numeric / <= 11 takes the EXISTING packed
+    # walk, byte-for-byte unchanged (+build_buckets+ + +bucket_for_visitor+,
+    # both untouched by this story). The anchored branch is fed the FULL
+    # ordered {#variation_list} (inactive arms retained for anchor stability) —
+    # never {#build_buckets}, which drops inactive arms for the packed walk.
+    def fresh_bucketing_decision(visitor_id, experience, experience_id)
+      version = experience["version"]
+      if version.is_a?(Numeric) && version > 11
+        @bucketing_manager&.bucket_for_visitor_anchored(
+          variation_list(experience), visitor_id, experience_id: experience_id
+        )
+      else
+        buckets = build_buckets(experience)
+        @bucketing_manager&.bucket_for_visitor(buckets, visitor_id, experience_id: experience_id)
+      end
     end
 
     # True when +experience.id+ is in the archived-experiences list (to_s match).
