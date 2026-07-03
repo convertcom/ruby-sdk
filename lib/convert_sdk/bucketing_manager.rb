@@ -147,8 +147,11 @@ module ConvertSdk
     # +getBucketRanges+ + +selectBucketAnchored+ (bm.ts:145-190) into one pass so
     # the method stays self-contained and independently unit-testable:
     #
-    #   allocation = ta.is_a?(Numeric) ? ta.to_f : 100.0
-    #   active     = status_active(status) && allocation.positive?
+    #   allocation = anchored_allocation(ta) — Float(ta, exception: false) coercion; a
+    #     nil coercion result (non-numeric/absent ta) defaults to 100.0, mirroring the
+    #     JS oracle's `isNaN(ta) ? 100.0 : Number(ta)`
+    #   active     = anchored_active?(status, allocation) — ((status.nil? || status == "")
+    #     ? true : status == "running") && allocation.positive?
     #   total_weight = sum(allocation) over ALL entries (active AND inactive)
     #   return nil if total_weight <= 0
     #   cum = 0.0
@@ -240,7 +243,14 @@ module ConvertSdk
     # +undefined+ -> +isNaN+ -> 100.0/active; explicit +null+ ->
     # +Number(null)+ is +0+ -> 0/inactive). We match JS for the served/tested
     # case (absent -> 100.0/active); explicit-null +traffic_allocation+ is
-    # never served (0 occurrences in the 59-vector golden fixture).
+    # never served (0 occurrences in the 59-vector golden fixture). The same
+    # coercion-class divergence applies to an empty-string/whitespace-only
+    # +traffic_allocation+: +Float("", exception: false)+ (and whitespace-only
+    # strings) coerce to +nil+ -> defaults to 100.0/active here, whereas JS's
+    # +Number("")+ is +0+ -> 0/inactive; behaviorally neutral for the actual
+    # contract since +traffic_allocation+ is a backend-served numeric field
+    # and this value is never served (0 occurrences of empty-string/
+    # whitespace-only +ta+ in the 59-vector golden cross-SDK fixture).
     def anchored_allocation(traffic_allocation)
       coerced = Float(traffic_allocation, exception: false)
       coerced.nil? ? 100.0 : coerced
