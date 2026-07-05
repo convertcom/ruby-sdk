@@ -378,14 +378,29 @@ module ConvertSdk
       end
     end
 
-    # Build the config-fetch URL: +{config_endpoint}/config/{sdkKey}+ with an
-    # +environment+ query parameter appended only when one is configured.
-    def config_url
+    # Build the config-fetch URL: +{config_endpoint}/config/{sdkKey}+ with
+    # query params appended in a fixed order — +environment+ (when configured)
+    # then +_conv_low_cache=1+ (when effective low-cache is active) — joined
+    # with +&+ and prefixed with a single +?+ only when at least one param is
+    # present. +environment+ stays first so the no-cache_level/no-override
+    # shape (the pre-RB-2 AC2 regression lock) stays byte-identical: bare URL
+    # when no environment, +?environment=...+ with no trailing +&+ otherwise.
+    #
+    # +force_low_cache:+ is a private, internal-only seam (qs-03's per-fetch
+    # experiment-preview override) — not part of the public API. Effective
+    # low-cache is an OR of the override and the configured +cache_level+:
+    # +force_low_cache || @config.cache_level == "low"+.
+    def config_url(force_low_cache: false)
       url = "#{@config.config_endpoint}/config/#{@config.sdk_key}"
-      env = @config.environment
-      return url if env.nil?
+      params = [] #: Array[String]
 
-      "#{url}?environment=#{URI.encode_www_form_component(env)}"
+      env = @config.environment
+      params << "environment=#{URI.encode_www_form_component(env)}" unless env.nil?
+      params << "_conv_low_cache=1" if force_low_cache || @config.cache_level == "low"
+
+      return url if params.empty?
+
+      "#{url}?#{params.join("&")}"
     end
 
     # The fetch headers: an +Authorization: Bearer {secret}+ value when a secret
