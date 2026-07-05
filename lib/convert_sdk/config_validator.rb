@@ -20,13 +20,17 @@ module ConvertSdk
   # * intervals — +data_refresh_interval+ / +flush_interval+ are Numeric or nil
   #   (nil = timer-off); +open_timeout+ / +read_timeout+ are Numeric;
   # * booleans — +keys_case_sensitive+ / +tracking+ (strict true/false);
-  # * log level — must be one of the {LogLevel} values.
+  # * log level — must be one of the {LogLevel} values;
+  # * cache level (qs-02) — must be +nil+ or the String +"low"+.
   class ConfigValidator
     # The accepted {LogLevel} integer values (TRACE..SILENT).
     LOG_LEVEL_VALUES = [
       LogLevel::TRACE, LogLevel::DEBUG, LogLevel::INFO,
       LogLevel::WARN, LogLevel::ERROR, LogLevel::SILENT
     ].freeze
+
+    # The accepted +cache_level+ values (qs-02): nil (no-op) or "low".
+    CACHE_LEVEL_VALUES = [nil, "low"].freeze
 
     # @param values [Hash{Symbol=>Object}] the merged option values, keyed by the
     #   public snake_case option names (the {Config::DEFAULTS} keys).
@@ -46,6 +50,7 @@ module ConvertSdk
       validate_intervals!
       validate_booleans!
       validate_log_level!
+      validate_cache_level!
     end
 
     private
@@ -94,6 +99,16 @@ module ConvertSdk
 
       raise ArgumentError,
             "log_level must be a LogLevel value (#{LOG_LEVEL_VALUES.join(", ")}), got #{level.inspect}"
+    end
+
+    # cache_level (qs-02) must be nil or "low" — the platform's low-cache signal.
+    def validate_cache_level!
+      value = @values[:cache_level]
+      return if CACHE_LEVEL_VALUES.include?(value)
+
+      raise ArgumentError,
+            "cache_level must be nil or \"low\" (#{CACHE_LEVEL_VALUES.map(&:inspect).join(", ")}), " \
+            "got #{value.inspect}"
     end
 
     # Require String-or-nil (nil acceptable for optional strings).
