@@ -109,6 +109,8 @@ module ConvertSdk
 
     def bucket_fresh: (String visitor_id, Hash[String, untyped] experience, Hash[Symbol, untyped] attributes) -> (BucketedVariation | Sentinel)
 
+    def fresh_bucketing_decision: (String visitor_id, Hash[String, untyped] experience, String experience_id) -> Hash[Symbol, untyped]?
+
     def archived?: (Hash[String, untyped] experience) -> bool
 
     def environment_match?: (Hash[String, untyped] experience, untyped environment) -> bool

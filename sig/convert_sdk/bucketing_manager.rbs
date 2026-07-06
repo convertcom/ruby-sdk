@@ -7,6 +7,11 @@ module ConvertSdk
     # Float (e.g. 50.0, the wire shape of test-config variations).
     type percentage = Integer | Float
 
+    # An anchored-allocation entry built internally by #anchored_allocations.
+    type anchored_entry = { id: untyped, allocation: Float, active: bool }
+
+    ANCHORED_MAX_TRAFFIC: Integer
+
     @max_traffic: Integer
     @hash_seed: Integer
     @max_hash: Float
@@ -28,5 +33,29 @@ module ConvertSdk
       ?seed: Integer,
       ?redistribute: percentage
     ) -> Hash[Symbol, untyped]?
+
+    # Select the variation whose ANCHORED range contains +value+ (contract v12,
+    # qs-01), or nil. +variations+ is the FULL ordered variation config list
+    # (active AND inactive/stopped arms).
+    def select_bucket_anchored: (Array[untyped] variations, Integer value) -> String?
+
+    # Resolve a visitor to {variation_id:, bucketing_allocation:} under the
+    # ANCHORED layout (contract v12, qs-01), or nil.
+    def bucket_for_visitor_anchored: (
+      Array[untyped] variations,
+      untyped visitor_id,
+      ?experience_id: String,
+      ?seed: Integer
+    ) -> Hash[Symbol, untyped]?
+
+    private
+
+    def anchored_allocations: (Array[untyped] variations) -> Array[anchored_entry]
+
+    def anchored_allocation: (untyped traffic_allocation) -> Float
+
+    def anchored_active?: (untyped status, Float allocation) -> bool
+
+    def anchored_walk: (Array[anchored_entry] entries, Float total_weight, Integer value) -> String?
   end
 end

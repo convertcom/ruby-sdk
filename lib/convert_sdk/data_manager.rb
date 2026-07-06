@@ -566,8 +566,7 @@ module ConvertSdk
     # No covering bucket OR a drifted-out selected id -> VARIATION_NOT_DECIDED.
     def bucket_fresh(visitor_id, experience, attributes)
       experience_id = experience["id"].to_s
-      buckets = build_buckets(experience)
-      decision = @bucketing_manager&.bucket_for_visitor(buckets, visitor_id, experience_id: experience_id)
+      decision = fresh_bucketing_decision(visitor_id, experience, experience_id)
       variation_id = decision&.fetch(:variation_id, nil)
       variation = variation_id && retrieve_variation(experience, variation_id)
       if variation.nil?
@@ -578,6 +577,37 @@ module ConvertSdk
       persist_bucketing(visitor_id, experience_id, variation_id, attributes)
       @log_manager&.debug("DataManager#retrieve_bucketing: bucketed exp=#{experience_id} var=#{variation_id}")
       build_bucketed_variation(experience, variation, decision&.fetch(:bucketing_allocation, nil))
+    end
+
+    # qs-01 (bucketing contract v12) anchored-vs-packed GATE. Mirrors the JS
+    # reference's +Number(experience.version) > 11+ (data-manager.ts:695) via
+    # +Float(x, exception: false)+ coercion: a numeric-looking String (e.g.
+    # +"12"+) counts as anchored exactly like the JS oracle, not just a
+    # genuine +Numeric+. Missing / nil / genuinely non-numeric (e.g.
+    # +"twelve"+) / <= 11 all coerce to +nil+ or a value <= 11 and take the
+    # EXISTING packed walk, byte-for-byte unchanged (+build_buckets+ +
+    # +bucket_for_visitor+, both untouched by this story). The anchored branch
+    # is fed the FULL ordered {#variation_list} (inactive arms retained for
+    # anchor stability) — never {#build_buckets}, which drops inactive arms
+    # for the packed walk.
+    #
+    # Hard boundary (documented, not fixable in Ruby): +JSON.parse+ collapses
+    # an explicit JSON +null+ version and an ABSENT version to the same Ruby
+    # +nil+, so this SDK cannot reproduce a JS split between the two (JS:
+    # absent -> +undefined+ -> +Number(undefined)+ is +NaN+ -> packed;
+    # explicit +null+ -> +Number(null)+ is +0+ -> also packed here, so the two
+    # actually agree for this field). Never served in practice regardless.
+    def fresh_bucketing_decision(visitor_id, experience, experience_id)
+      version = Float(experience["version"], exception: false)
+      anchored = !version.nil? && version > 11
+      if anchored
+        @bucketing_manager&.bucket_for_visitor_anchored(
+          variation_list(experience), visitor_id, experience_id: experience_id
+        )
+      else
+        buckets = build_buckets(experience)
+        @bucketing_manager&.bucket_for_visitor(buckets, visitor_id, experience_id: experience_id)
+      end
     end
 
     # True when +experience.id+ is in the archived-experiences list (to_s match).
