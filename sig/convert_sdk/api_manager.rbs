@@ -5,6 +5,10 @@ module ConvertSdk
   class ApiManager
     SOURCE: String
     ENRICH_DATA: bool
+    CONFIG_BY_EXPERIENCE_TTL: Integer
+
+    self.@config_by_experience_cache: Hash[String, Hash[String, untyped]]
+    self.@config_by_experience_mutex: Thread::Mutex
 
     @config: Config
     @data_manager: DataManager
@@ -15,6 +19,12 @@ module ConvertSdk
     @flush_timer: BackgroundTimer
 
     attr_reader queue: VisitorsQueue
+
+    def self.cached_config_by_experience: (String cache_key) -> Hash[String, untyped]?
+
+    def self.memoize_config_by_experience: (String cache_key, Hash[String, untyped] config) -> void
+
+    def self.reset_config_by_experience_cache_for_tests!: () -> void
 
     def initialize: (
       config: Config,
@@ -27,6 +37,8 @@ module ConvertSdk
     def enqueue: (String visitor_id, Hash[String, untyped] event, ?segments: Hash[String, untyped]?) -> void
 
     def release_queue: (?String? reason) -> void
+
+    def get_config_by_experience: (String experience_id) -> Hash[String, untyped]?
 
     private
 
@@ -51,5 +63,9 @@ module ConvertSdk
     def sdk_key: () -> String
 
     def auth_headers: () -> Hash[String, String]
+
+    def fetch_config_by_experience: (String cache_key, String experience_id) -> Hash[String, untyped]?
+
+    def config_by_experience_url: (String experience_id) -> String
   end
 end

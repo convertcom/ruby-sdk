@@ -82,6 +82,15 @@ Metrics/ClassLength:
     # length reflects the ported reference surface, not unmanaged growth (same
     # rationale as the DataManager/RuleManager feature surfaces above).
     - "lib/convert_sdk/feature_manager.rb"
+    # ApiManager (RB-3 / qs-03 AC4/AC8) gains #get_config_by_experience — the
+    # exp-scoped preview-config fetch + its process-wide memo. The task spec
+    # explicitly directs this onto ApiManager rather than a new file ("do not
+    # reach into Client or duplicate the qs-02 low-cache pattern wholesale —
+    # this is a distinct exp-scoped endpoint" living beside the existing
+    # HTTP-port delivery surface). Same rationale as the other cohesive-
+    # feature-surface exclusions above: the growth is the mandated surface,
+    # not unmanaged sprawl.
+    - "lib/convert_sdk/api_manager.rb"
 
 # The Client (Story 2.5) is wired by explicit constructor injection of its six
 # collaborator managers (config, log, http, data-store, event, data) — the

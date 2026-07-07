@@ -568,12 +568,9 @@ RSpec.describe ConvertSdk::ApiManager do
       end
 
       it "orders params as environment, then exp, then _conv_low_cache, then debug_token when all four compose" do
-        stub_vendored_config
         manager = build_api_manager(environment: "staging", debug_token: "tok-123")
 
-        manager.get_config_by_experience("123")
-
-        expect(captured_request.uri).to eq(
+        expect(manager.send(:config_by_experience_url, "123")).to eq(
           "#{HttpStubs::CONFIG_HOST}/config/sdk-key-1?environment=staging&exp=123&_conv_low_cache=1&debug_token=tok-123"
         )
       end

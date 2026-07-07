@@ -2,6 +2,8 @@
 
 require "json"
 
+require "uri"
+
 module ConvertSdk
   # The outbound delivery manager — it owns the {VisitorsQueue}, the tracking
   # endpoint, queue release, and THE wire-payload builder.
@@ -59,6 +61,70 @@ module ConvertSdk
     # dataStore is configured, and Ruby always provides one (api-manager.ts:94).
     ENRICH_DATA = false
 
+    # qs-03 AC8 — the {#get_config_by_experience} memo TTL in seconds. JS
+    # oracle: +CONFIG_BY_EXPERIENCE_TTL+ (api-manager.ts, ms there, seconds
+    # here — Ruby-side math is wall-clock seconds via +Time.now.to_f+).
+    CONFIG_BY_EXPERIENCE_TTL = 60
+
+    # qs-03 AC8 — the PROCESS-WIDE {#get_config_by_experience} memo: a class-
+    # level Hash (NOT a class variable — see architecture's "no globals or
+    # singletons" constructor-injection mandate; this is the one deliberate,
+    # narrowly-scoped exception, mirroring the JS oracle's module-level
+    # +configByExperienceCache+ Map so every {ApiManager} instance sharing an
+    # +sdk_key+ shares one fetch) keyed +"{sdk_key}:{experience_id}"+, entries
+    # shaped +{"config" => Hash, "expires_at" => Float}+. Mutated only under
+    # the +@config_by_experience_mutex+ below (fork-safety + thread-safety) —
+    # mirrors {ForkGuard}'s own module-level-state + mutex discipline
+    # (fork_guard.rb).
+    @config_by_experience_cache = {}
+    # qs-03 AC8 — guards {@config_by_experience_cache}. Class-level (not
+    # per-instance) because the cache it protects is process-wide.
+    @config_by_experience_mutex = Thread::Mutex.new
+
+    class << self
+      # Read a still-fresh (within {CONFIG_BY_EXPERIENCE_TTL}) memoized config
+      # for +cache_key+, or +nil+ when absent/expired (qs-03 AC8).
+      # @api private
+      # @param cache_key [String]
+      # @return [Hash{String=>Object}, nil]
+      def cached_config_by_experience(cache_key)
+        @config_by_experience_mutex.synchronize do
+          entry = @config_by_experience_cache[cache_key]
+          entry["config"] if entry && Time.now.to_f < entry["expires_at"]
+        end
+      end
+
+      # Memoize +config+ under +cache_key+ for {CONFIG_BY_EXPERIENCE_TTL}
+      # seconds (qs-03 AC8). A failed fetch must NEVER reach this method (the
+      # caller only memoizes on success).
+      # @api private
+      # @param cache_key [String]
+      # @param config [Hash{String=>Object}]
+      # @return [void]
+      def memoize_config_by_experience(cache_key, config)
+        @config_by_experience_mutex.synchronize do
+          @config_by_experience_cache[cache_key] = {
+            "config" => config,
+            "expires_at" => Time.now.to_f + CONFIG_BY_EXPERIENCE_TTL
+          }
+        end
+      end
+
+      # Test-only reset (mirrors {ForkGuard.reset_for_tests!}) so specs stay
+      # order-independent against this process-wide memo. Also the FORK-side
+      # clear (registered per-instance in {#initialize} via
+      # +ForkGuard.register_child_callback+): even though a stale memo isn't
+      # unsafe to serve, clearing it on fork matches this file's existing
+      # queue-ownership-clear discipline ({#clear_queue_ownership}) and avoids
+      # a forked child transparently serving a parent process's stale
+      # preview-experience config across a fork boundary.
+      # @api private
+      # @return [void]
+      def reset_config_by_experience_cache_for_tests!
+        @config_by_experience_mutex.synchronize { @config_by_experience_cache = {} }
+      end
+    end
+
     # @param config [Config] the validated configuration (track endpoint, sdk_key,
     #   sdk_key_secret).
     # @param data_manager [DataManager] supplies +account_id+ / +project_id+ for
@@ -95,6 +161,12 @@ module ConvertSdk
       # knows nothing about the queue; ApiManager owns its own clear (architecture
       # Decision 6 callback-registry design).
       ForkGuard.register_child_callback(-> { clear_queue_ownership })
+      # qs-03 AC8 — clear the process-wide config-by-experience memo in a
+      # forked child (see {ApiManager.reset_config_by_experience_cache_for_tests!}
+      # doc for the rationale). Registered ALONGSIDE (not replacing) the
+      # queue-ownership-clear callback above — ForkGuard fires every
+      # registered callback in registration order.
+      ForkGuard.register_child_callback(-> { self.class.reset_config_by_experience_cache_for_tests! })
     end
 
     # @return [VisitorsQueue] the underlying per-visitor event queue.
@@ -165,6 +237,35 @@ module ConvertSdk
     rescue StandardError => e
       # Never-crash boundary: a delivery failure must not crash the host.
       @log_manager.error("ApiManager#release_queue: #{e.class}: #{e.message}")
+    end
+
+    # Fetch (or reuse a memoized) config scoped to a single experience — qs-03
+    # AC4 fetch resolution / AC8 memoization, the preview lookup path. Always
+    # requests +_conv_low_cache=1+ (bypassing the CDN cache) and scopes the
+    # response with +exp=<experience_id>+; includes +environment+ /
+    # +debug_token+ when configured. JS oracle: +getConfigByExperience+
+    # (api-manager.ts ~344).
+    #
+    # Memoized PROCESS-WIDE (see {CONFIG_BY_EXPERIENCE_TTL}), keyed
+    # +"{sdk_key}:{experience_id}"+ — repeated lookups within the TTL window,
+    # including from a DIFFERENT {ApiManager} instance sharing the same
+    # +sdk_key+, reuse the same fetch. Never touches the store (qs-03: "TTL
+    # 60s (in-memory only; never the store)") — the memo lives entirely in the
+    # class-level cache.
+    #
+    # On a failed fetch (transport failure, non-2xx, or a non-Hash body):
+    # returns +nil+ WITHOUT memoizing, so the next lookup retries (graceful
+    # degradation, NFR9 — never raises).
+    #
+    # @param experience_id [String]
+    # @return [Hash{String=>Object}, nil] the fetched/memoized config, or nil
+    #   on a failed fetch.
+    def get_config_by_experience(experience_id)
+      cache_key = "#{@config.sdk_key}:#{experience_id}"
+      cached = self.class.cached_config_by_experience(cache_key)
+      return cached unless cached.nil?
+
+      fetch_config_by_experience(cache_key, experience_id)
     end
 
     private
@@ -283,6 +384,38 @@ module ConvertSdk
       return {} if secret.nil?
 
       { "Authorization" => "Bearer #{secret}" }
+    end
+
+    # GET {config_by_experience_url(experience_id)} through the HTTP port; on
+    # success with a Hash body, memoize and return it, else return nil WITHOUT
+    # memoizing (qs-03 AC4/AC8). +@config.sdk_key+ is used directly (no
+    # account/project fallback — the config-fetch convention this endpoint
+    # mirrors, {Client#config_url}, uses +@config.sdk_key+ unconditionally; the
+    # fallback in {#sdk_key} is a track-URL-only concern).
+    def fetch_config_by_experience(cache_key, experience_id)
+      response = @http_client.request(method: :get, url: config_by_experience_url(experience_id), headers: auth_headers)
+      return nil unless response.success? && response.body.is_a?(Hash)
+
+      self.class.memoize_config_by_experience(cache_key, response.body)
+      response.body
+    end
+
+    # Build +{config_endpoint}/config/{sdk_key}+ with query params in the
+    # FIXED order the qs-03 contract mandates: +environment+ (when set), then
+    # +exp=<experience_id>+ (always), then +_conv_low_cache=1+ (always), then
+    # +debug_token+ (when set). Values are URI-encoded (mirrors
+    # {Client#config_url_params}'s encoding convention).
+    def config_by_experience_url(experience_id)
+      env = @config.environment
+      debug_token = @config.debug_token
+
+      params = [] #: Array[String]
+      params << "environment=#{URI.encode_www_form_component(env)}" unless env.nil?
+      params << "exp=#{URI.encode_www_form_component(experience_id)}"
+      params << "_conv_low_cache=1"
+      params << "debug_token=#{URI.encode_www_form_component(debug_token)}" unless debug_token.nil?
+
+      "#{@config.config_endpoint}/config/#{@config.sdk_key}?#{params.join("&")}"
     end
   end
 end
