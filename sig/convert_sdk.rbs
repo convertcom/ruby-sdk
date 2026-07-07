@@ -14,6 +14,14 @@ module ConvertSdk
 
   def self.at_exit_registration_enabled=: (bool value) -> bool
 
+  # Numeric-only segment pattern used to validate a preview param value's
+  # experience/variation id halves (qs-03 AC9).
+  PREVIEW_PARAM_NUMERIC_ONLY: Regexp
+
+  # Parse a preview link param value ("{experienceId}.{variationId}") into a
+  # 2-element String pair, or nil on any malformed/non-String input.
+  def self.parse_preview_param: (untyped value) -> [String, String]?
+
   # Build an SDK client from an SDK key (fetch) or a pre-fetched data object.
   def self.create: (?sdk_key: String?, ?data: Hash[untyped, untyped]?, ?store: untyped?, ?clock: (^() -> Float)?, ?sink: untyped?, **untyped options) -> Client
 
