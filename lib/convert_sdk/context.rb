@@ -235,14 +235,24 @@ module ConvertSdk
     def set_preview(experience_id:, variation_id:)
       return warn_preview_inert("experience_id/variation_id required") if blank?(experience_id) || blank?(variation_id)
 
-      experience = resolve_preview_experience(experience_id)
-      return warn_preview_inert("no experience found for id=#{experience_id}") if experience.nil?
+      # Coerce ONCE at this public entry (review round 2) — ids may arrive as
+      # different types (an Integer id read straight off a link param, a
+      # String elsewhere); every downstream reference (resolution, the
+      # decision lookup, the stored @preview hash) threads these coerced
+      # locals instead of the original keyword args, mirroring
+      # {#fetch_preview_experience}'s existing "ids may arrive as different
+      # types" +.to_s+ convention.
+      exp_id = experience_id.to_s
+      var_id = variation_id.to_s
 
-      decision = @data_manager.get_preview_decision(experience, variation_id)
-      return warn_preview_inert("no variation found for id=#{variation_id}") if decision.nil?
+      experience = resolve_preview_experience(exp_id)
+      return warn_preview_inert("no experience found for id=#{exp_id}") if experience.nil?
+
+      decision = @data_manager.get_preview_decision(experience, var_id)
+      return warn_preview_inert("no variation found for id=#{var_id}") if decision.nil?
 
       @preview = {
-        experience_id: experience_id, variation_id: variation_id,
+        experience_id: exp_id, variation_id: var_id,
         experience: experience, experience_key: experience["key"]
       }
       self

@@ -690,6 +690,24 @@ RSpec.describe ConvertSdk::ApiManager do
       end
     end
 
+    # Review round 2 — a direct-data Config has no sdk_key, so this method
+    # must guard BEFORE building a `.../config/?exp=…` URL with a nil key
+    # (which would fire a guaranteed-failing HTTP request).
+    describe "data-only mode guard (no sdk_key, review round 2)" do
+      it "returns nil and makes zero HTTP requests when @config.sdk_key is nil" do
+        config = ConvertSdk::Config.new(data: vendored, config_endpoint: HttpStubs::CONFIG_HOST)
+        manager = described_class.new(
+          config: config, data_manager: data_manager, http_client: http_client,
+          event_manager: event_manager, log_manager: log_manager
+        )
+
+        result = manager.get_config_by_experience("123")
+
+        expect(result).to be_nil
+        expect(captured_requests).to be_empty
+      end
+    end
+
     describe "no store interaction (AC8 — never the store)" do
       it "never reads or writes the store while resolving or memoizing" do
         store_spy = instance_double(ConvertSdk::DataStoreManager)

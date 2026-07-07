@@ -164,8 +164,15 @@ RSpec.describe "Context#set_preview (RB-5 / qs-03 AC4, AC5, AC7)" do
 
   # Every :warn-level message captured by the sink, joined (AC7 requires a
   # WARNING specifically, not just any log level, on inert bad input).
+  #
+  # NOTE (review round 2): `sink.entries` is an Array of [level, message]
+  # pairs (spec/support/capturing_sink.rb), NOT a Hash — RuboCop's
+  # Style/HashSlice misfires on the prior `select { |level, _| level == :warn }`
+  # shape and its autocorrect (`slice(:warn)`) would raise a TypeError at
+  # runtime on an Array. `filter_map` sidesteps the cop entirely while
+  # preserving the exact behavior (only :warn messages, newline-joined).
   def warn_messages
-    sink.entries.select { |level, _| level == :warn }.map(&:last).join("\n")
+    sink.entries.filter_map { |level, message| message if level == :warn }.join("\n")
   end
 
   # The fixture's real experience: id 100218245 / key
@@ -236,6 +243,24 @@ RSpec.describe "Context#set_preview (RB-5 / qs-03 AC4, AC5, AC7)" do
       ctx.run_experience(exp_key)
 
       expect(fired).to be_empty
+    end
+
+    # Review round 2 — ids may arrive as Integers (e.g. straight off a link
+    # param) rather than Strings; #set_preview coerces once at its entry, so
+    # Integer ids must resolve IDENTICALLY to their String forms (no
+    # TypeError, forced decision returned, @preview populated correctly).
+    it "resolves identically when experience_id/variation_id arrive as Integers" do
+      oracle = data_manager.get_preview_decision(data_manager.experience_by_key(exp_key), forced_variation_id)
+      ctx = build_context(attributes: non_matching_attrs)
+
+      expect { ctx.set_preview(experience_id: exp_id.to_i, variation_id: forced_variation_id.to_i) }
+        .not_to raise_error
+      result = ctx.run_experience(exp_key)
+
+      expect(result).to be_a(ConvertSdk::BucketedVariation)
+      expect(result.id).to eq(oracle.id)
+      expect(result.key).to eq(oracle.key)
+      expect(result.experience_id).to eq(oracle.experience_id)
     end
   end
 

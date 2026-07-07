@@ -193,7 +193,7 @@ module ConvertSdk
       # doc for the rationale). Registered ALONGSIDE (not replacing) the
       # queue-ownership-clear callback above — ForkGuard fires every
       # registered callback in registration order.
-      ForkGuard.register_child_callback(-> { self.class.reset_config_by_experience_cache_for_tests! })
+      ForkGuard.register_child_callback(-> { ApiManager.reset_config_by_experience_cache_for_tests! })
     end
 
     # @return [VisitorsQueue] the underlying per-visitor event queue.
@@ -288,6 +288,13 @@ module ConvertSdk
     # @return [Hash{String=>Object}, nil] the fetched/memoized config, or nil
     #   on a failed fetch.
     def get_config_by_experience(experience_id)
+      # Data-only mode guard (review round 2) — a direct-data Config has no
+      # sdk_key, and therefore no config-fetch endpoint to hit; without this
+      # guard a preview resolution reachable in that mode would build a
+      # +.../config/?exp=…+ URL with a nil key and fire a guaranteed-failing
+      # HTTP request.
+      return nil if @config.sdk_key.nil?
+
       cache_key = "#{@config.sdk_key}:#{experience_id}"
       cached = self.class.cached_config_by_experience(cache_key)
       return cached unless cached.nil?
