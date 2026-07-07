@@ -469,4 +469,95 @@ RSpec.describe ConvertSdk::DataManager do
       expect(result).not_to have_key("bucketingData")
     end
   end
+
+  # --- qs-03 RB-4: #get_preview_decision — pure, full-bypass (AC4/AC5) -------
+
+  describe "#get_preview_decision (qs-03 AC4/AC5 — pure, full-bypass)" do
+    # A synthetic experience hash carrying, on ONE variation, every property a
+    # normal #get_bucketing would reject (draft experience status, mismatched
+    # environment, stopped variation status, zero traffic_allocation). It is
+    # NOT installed in the fixture config, simulating a `?exp=`-fetched
+    # preview experience the shared config has never seen (AC4).
+    let(:preview_experience) do
+      {
+        "id" => "900001",
+        "key" => "preview-exp",
+        "name" => "Preview Experience",
+        "status" => "draft",
+        "environment" => "staging",
+        "variations" => [
+          {
+            "id" => "900101",
+            "key" => "var-a",
+            "name" => "Variation A",
+            "status" => "stopped",
+            "traffic_allocation" => 0.0,
+            "changes" => { "css" => "a" }
+          }
+        ]
+      }
+    end
+    let(:preview_variation_id) { "900101" }
+
+    # Wired with a live store so store-write spies have something to attach to;
+    # the visitor's stored decision deliberately disagrees with the preview
+    # target, proving preview precedence over a stored decision (AC5).
+    def preview_manager(visitor_id: "visitor-preview")
+      described_class.new(log_manager: log_manager, data_store_manager: dsm).tap do |m|
+        m.install_config(config)
+        dsm.merge_visitor_data(data["account_id"], data["project"]["id"], visitor_id) do |_current|
+          { "bucketing" => { preview_experience["id"] => "some-other-variation-id" } }
+        end
+      end
+    end
+
+    it "returns a BucketedVariation built from the passed experience + variation" do
+      decision = preview_manager.get_preview_decision(preview_experience, preview_variation_id)
+
+      expect(decision).to be_a(ConvertSdk::BucketedVariation)
+      expect(decision.experience_id).to eq("900001")
+      expect(decision.experience_key).to eq("preview-exp")
+      expect(decision.experience_name).to eq("Preview Experience")
+      expect(decision.id).to eq("900101")
+      expect(decision.key).to eq("var-a")
+      expect(decision.name).to eq("Variation A")
+      expect(decision.status).to eq("stopped")
+      expect(decision.traffic_allocation).to eq(0.0)
+      expect(decision.changes).to eq({ "css" => "a" })
+    end
+
+    it "resolves purely from the passed experience, never from the installed config" do
+      m = preview_manager
+      expect(m.experience_by_key("preview-exp")).to be_nil # sanity: absent from config
+
+      decision = m.get_preview_decision(preview_experience, preview_variation_id)
+      expect(decision).to be_a(ConvertSdk::BucketedVariation)
+      expect(decision.id).to eq(preview_variation_id)
+    end
+
+    it "bypasses status, environment, traffic, and stored-decision gates (AC5 full bypass)" do
+      # A normal decision through the real gate would reject on ANY of: draft
+      # experience status, mismatched environment, stopped variation status,
+      # zero traffic_allocation, or a disagreeing stored decision. This single
+      # experience/variation combo carries ALL of them at once, so one passing
+      # assertion proves the full-bypass surface rather than one test per gate.
+      decision = preview_manager.get_preview_decision(preview_experience, preview_variation_id)
+      expect(decision).not_to be_nil
+    end
+
+    it "returns nil for a variation id absent from the passed experience (inert on bad input)" do
+      expect(preview_manager.get_preview_decision(preview_experience, "does-not-exist")).to be_nil
+    end
+
+    it "never writes the store and never persists a bucketing decision" do
+      m = preview_manager
+      allow(store).to receive(:set).and_call_original
+      allow(dsm).to receive(:merge_visitor_data).and_call_original
+
+      m.get_preview_decision(preview_experience, preview_variation_id)
+
+      expect(store).not_to have_received(:set)
+      expect(dsm).not_to have_received(:merge_visitor_data)
+    end
+  end
 end
