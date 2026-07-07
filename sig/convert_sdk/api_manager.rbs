@@ -26,6 +26,8 @@ module ConvertSdk
 
     def self.reset_config_by_experience_cache_for_tests!: () -> void
 
+    def self.config_by_experience_cache_size_for_tests: () -> Integer
+
     def initialize: (
       config: Config,
       data_manager: DataManager,

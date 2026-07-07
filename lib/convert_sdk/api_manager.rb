@@ -97,15 +97,26 @@ module ConvertSdk
       # Memoize +config+ under +cache_key+ for {CONFIG_BY_EXPERIENCE_TTL}
       # seconds (qs-03 AC8). A failed fetch must NEVER reach this method (the
       # caller only memoizes on success).
+      #
+      # FIX-1 (code review round 1) — sweeps every OTHER already-expired entry
+      # from the process-wide cache before inserting, mirroring the JS oracle
+      # (+api-manager.ts+ ~367-370, which does the same on every
+      # +getConfigByExperience+ write). +experience_id+ is
+      # operator/attacker-influenced (the +convert_preview={expId}.{varId}+
+      # link param), so without this sweep a stream of distinct ids would grow
+      # this Hash without bound in a long-lived process (a Puma/Rails worker) —
+      # it would otherwise only shrink on fork or process exit.
       # @api private
       # @param cache_key [String]
       # @param config [Hash{String=>Object}]
       # @return [void]
       def memoize_config_by_experience(cache_key, config)
         @config_by_experience_mutex.synchronize do
+          now = Time.now.to_f
+          @config_by_experience_cache.delete_if { |_key, entry| entry["expires_at"] <= now }
           @config_by_experience_cache[cache_key] = {
             "config" => config,
-            "expires_at" => Time.now.to_f + CONFIG_BY_EXPERIENCE_TTL
+            "expires_at" => now + CONFIG_BY_EXPERIENCE_TTL
           }
         end
       end
@@ -122,6 +133,22 @@ module ConvertSdk
       # @return [void]
       def reset_config_by_experience_cache_for_tests!
         @config_by_experience_mutex.synchronize { @config_by_experience_cache = {} }
+      end
+
+      # Test-only inspection: the current size of {@config_by_experience_cache}
+      # (FIX-1, code review round 1, qs-03 AC8 hardening). Lets specs assert
+      # that {.memoize_config_by_experience}'s expired-entry sweep actually
+      # shrinks the process-wide Hash — not merely that an expired LOOKUP
+      # returns nil. `experience_id` is operator/attacker-influenced (the
+      # +convert_preview={expId}.{varId}+ link param), so without a sweep a
+      # stream of distinct ids would accumulate unbounded entries in a
+      # long-lived process (Puma/Rails worker). Mirrors
+      # {.reset_config_by_experience_cache_for_tests!}'s test-only scope and
+      # mutex discipline.
+      # @api private
+      # @return [Integer]
+      def config_by_experience_cache_size_for_tests
+        @config_by_experience_mutex.synchronize { @config_by_experience_cache.size }
       end
     end
 

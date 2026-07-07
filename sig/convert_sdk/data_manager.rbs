@@ -64,7 +64,7 @@ module ConvertSdk
 
     def experience_by_key: (String key) -> Hash[String, untyped]?
 
-    def experience_by_id: (untyped experience_id) -> Hash[String, untyped]?
+    def experience_by_id: (String experience_id) -> Hash[String, untyped]?
 
     def feature_by_key: (String key) -> Hash[String, untyped]?
 

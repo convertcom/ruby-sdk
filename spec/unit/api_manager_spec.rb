@@ -661,6 +661,35 @@ RSpec.describe ConvertSdk::ApiManager do
       end
     end
 
+    # FIX-1 (code review round 1, qs-03 AC8 hardening) — `experience_id` comes
+    # from the operator/attacker-influenced `convert_preview={expId}.{varId}`
+    # link param, so a stream of distinct experience_ids must NOT accumulate
+    # unbounded entries in the process-wide `@config_by_experience_cache`
+    # Hash (only cleared on fork or process exit otherwise). JS oracle sweeps
+    # expired entries on every write (api-manager.ts ~367-370); this asserts
+    # the Ruby memo does the same — not merely that an expired LOOKUP returns
+    # nil (already covered above), but that the underlying Hash actually
+    # shrinks on the next write. Uses the same `Time.now` stub convention as
+    # the "TTL expiry" examples above (a `clock:` seam is not exercised here).
+    describe "process-wide eviction on write (memory-growth guard, FIX-1)" do
+      it "sweeps expired entries from the class-level cache when a new entry is memoized" do
+        stub_vendored_config
+        manager = build_api_manager
+        now = Time.now
+        allow(Time).to receive(:now) { now }
+
+        manager.get_config_by_experience("111")
+        manager.get_config_by_experience("222")
+        manager.get_config_by_experience("333")
+        expect(ConvertSdk::ApiManager.config_by_experience_cache_size_for_tests).to eq(3)
+
+        now += 61
+        manager.get_config_by_experience("444")
+
+        expect(ConvertSdk::ApiManager.config_by_experience_cache_size_for_tests).to eq(1)
+      end
+    end
+
     describe "no store interaction (AC8 — never the store)" do
       it "never reads or writes the store while resolving or memoizing" do
         store_spy = instance_double(ConvertSdk::DataStoreManager)
