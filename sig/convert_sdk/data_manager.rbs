@@ -76,6 +76,11 @@ module ConvertSdk
       ?Hash[Symbol, untyped] attributes
     ) -> (BucketedVariation | Sentinel)
 
+    def get_preview_decision: (
+      Hash[String, untyped] experience,
+      String variation_id
+    ) -> BucketedVariation?
+
     def convert: (
       String visitor_id,
       String goal_key,

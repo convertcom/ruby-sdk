@@ -342,6 +342,32 @@ module ConvertSdk
       retrieve_bucketing(visitor_id, experience, attributes)
     end
 
+    # ============================ PREVIEW (qs-03) ===========================
+    # Force-decide a specific variation on a caller-supplied experience,
+    # bypassing the ENTIRE decision flow above: audiences, segments, locations,
+    # the environment check, experience status, variation status/traffic
+    # filters, stored decisions, and the bucketing hash. Mirrors JS
+    # data-manager.ts +getPreviewDecision+ (qs-03 / SDK-4).
+    #
+    # PURE by construction: reads ONLY +experience["variations"]+ (via
+    # {#retrieve_variation}) -- never the installed config -- because a preview
+    # experience fetched via +?exp=+ may not be registered there. Has ZERO side
+    # effects: never calls {#persist_bucketing} / +merge_visitor_data+ and never
+    # enqueues anything (this method has no store or transport collaborator to
+    # call in the first place).
+    #
+    # @param experience [Hash] the experience config entity to preview (may be
+    #   absent from the installed config).
+    # @param variation_id [String] the variation id to force (+to_s+ compared).
+    # @return [BucketedVariation, nil] the forced decision, or nil when
+    #   +variation_id+ does not match any variation on +experience+.
+    def get_preview_decision(experience, variation_id)
+      variation = retrieve_variation(experience, variation_id)
+      return nil if variation.nil?
+
+      build_bucketed_variation(experience, variation, nil)
+    end
+
     # ========================== CONVERSION TRACKING =========================
     # Track a conversion for +visitor_id+ on +goal_key+ with optional revenue /
     # transaction +goal_data+, applying two-level goal dedup (Story 4.3).
