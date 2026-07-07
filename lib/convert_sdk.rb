@@ -199,6 +199,11 @@ module ConvertSdk
   # DataManager is config-read-only). The account/project resolvers are left to
   # the DataManager's own readers (its constructor defaults to +#account_id+ /
   # +#project_id+) — the live config IS the source of those store-key halves here.
+  # +config_cache_disabled+ is derived from +!config.debug_token.nil?+ (qs-03,
+  # Ruby-SDK-only hardening — NOT a JS-parity concern): while a debug token is
+  # configured, the config-cache WRITE is suppressed so a shared store cannot
+  # be poisoned with a debug-widened config that a production reader might
+  # later pick up.
   # @api private
   def self.build_data_manager(config, log_manager, data_store_manager, clock,
                               bucketing_manager, rule_manager)
@@ -211,6 +216,7 @@ module ConvertSdk
       ttl: config.data_refresh_interval,
       bucketing_manager: bucketing_manager,
       rule_manager: rule_manager,
+      config_cache_disabled: !config.debug_token.nil?,
       **clock_option
     )
   end

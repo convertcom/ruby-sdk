@@ -92,23 +92,27 @@ module ConvertSdk
     #   so a Context can supply its own resolution without re-reading config.
     # @param project_resolver [#call, nil] returns the project id for the visitor
     #   store key; defaults to {#project_id}.
+    # @param config_cache_disabled [Boolean] when true, {#cache_config} is a
+    #   no-op — the config-cache WRITE is suppressed. Ruby-SDK-only hardening
+    #   (qs-03, NOT a JS-parity concern): while a +debug_token+ is configured,
+    #   a shared store (e.g. Redis) must never be poisoned with a
+    #   debug-widened config that a production reader could later pick up.
+    #   Sourced by {ConvertSdk.build_data_manager} from +!config.debug_token.nil?+.
+    #   Defaults to +false+ (cache writes enabled) for standalone construction.
     def initialize(log_manager:, data_store_manager: nil, config_key: nil, ttl: nil,
                    clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }, refetch: nil,
                    bucketing_manager: nil, rule_manager: nil,
-                   account_resolver: nil, project_resolver: nil)
+                   account_resolver: nil, project_resolver: nil, config_cache_disabled: false)
       @log_manager = log_manager
       @data_store_manager = data_store_manager
       @config_key = config_key
       @ttl = ttl
+      @config_cache_disabled = config_cache_disabled
       # Timer-off (Lambda/CLI) mode is exactly "no refresh interval configured".
       @timer_off = ttl.nil?
       @clock = clock
       @refetch = refetch
-      # Decision-flow collaborators (Story 2.11). Config-read-only when absent.
-      @bucketing_manager = bucketing_manager
-      @rule_manager = rule_manager
-      @account_resolver = account_resolver || -> { account_id }
-      @project_resolver = project_resolver || -> { project_id }
+      assign_collaborators(bucketing_manager, rule_manager, account_resolver, project_resolver)
       # The deep-frozen config envelope, or nil before the first install. Read
       # lock-free by every reader; replaced atomically under @config_mutex.
       @config = nil #: Hash[String, untyped]?
@@ -392,6 +396,17 @@ module ConvertSdk
     end
 
     private
+
+    # Assign the decision-flow collaborators (Story 2.11) and their store-key
+    # resolvers — extracted from #initialize to keep it small. Collaborators
+    # are config-read-only when absent; resolvers default to this manager's
+    # own {#account_id} / {#project_id} readers when not injected.
+    def assign_collaborators(bucketing_manager, rule_manager, account_resolver, project_resolver)
+      @bucketing_manager = bucketing_manager
+      @rule_manager = rule_manager
+      @account_resolver = account_resolver || -> { account_id }
+      @project_resolver = project_resolver || -> { project_id }
+    end
 
     # The atomic check-then-mark (Story 4.3 / qs-01). Runs the dedup decision AND
     # the mark inside ONE store-merge block (the merge mutex). Returns true when
@@ -870,9 +885,14 @@ module ConvertSdk
 
     # Write the freshly-installed config through to the store, wrapped with a
     # WALL-CLOCK +fetched_at+ for cross-process staleness. A no-op when no store
-    # or key is wired (standalone unit construction). The DataStoreManager
-    # contains any store failure (logged), so this never crashes an install.
+    # or key is wired (standalone unit construction), or when
+    # +config_cache_disabled+ was set at construction (qs-03 — an active
+    # +debug_token+ suppresses the write so a shared store is never poisoned
+    # with a debug-widened config). The DataStoreManager contains any store
+    # failure (logged), so this never crashes an install.
     def cache_config(frozen)
+      return if @config_cache_disabled
+
       store = @data_store_manager
       key = @config_key
       return if store.nil? || key.nil?

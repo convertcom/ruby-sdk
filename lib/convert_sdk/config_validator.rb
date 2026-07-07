@@ -21,7 +21,8 @@ module ConvertSdk
   #   (nil = timer-off); +open_timeout+ / +read_timeout+ are Numeric;
   # * booleans — +keys_case_sensitive+ / +tracking+ (strict true/false);
   # * log level — must be one of the {LogLevel} values;
-  # * cache level (qs-02) — must be +nil+ or the String +"low"+.
+  # * cache level (qs-02) — must be +nil+ or the String +"low"+;
+  # * debug token (qs-03) — must be +nil+ or a String (no fixed allow-list).
   class ConfigValidator
     # The accepted {LogLevel} integer values (TRACE..SILENT).
     LOG_LEVEL_VALUES = [
@@ -64,7 +65,7 @@ module ConvertSdk
 
     # String-or-nil options, plus the Hash-or-nil data option.
     def validate_strings!
-      %i[sdk_key sdk_key_secret environment config_endpoint track_endpoint negation].each do |name|
+      %i[sdk_key sdk_key_secret environment config_endpoint track_endpoint negation debug_token].each do |name|
         require_string(name, @values[name])
       end
       require_type(:data, @values[:data], Hash) unless @values[:data].nil?

@@ -16,6 +16,7 @@ module ConvertSdk
     @rule_manager: RuleManager?
     @account_resolver: ^() -> untyped
     @project_resolver: ^() -> untyped
+    @config_cache_disabled: bool
 
     attr_accessor refetch: (^() -> untyped)?
 
@@ -29,7 +30,8 @@ module ConvertSdk
       ?bucketing_manager: BucketingManager?,
       ?rule_manager: RuleManager?,
       ?account_resolver: (^() -> untyped)?,
-      ?project_resolver: (^() -> untyped)?
+      ?project_resolver: (^() -> untyped)?,
+      ?config_cache_disabled: bool
     ) -> void
 
     def install_config: (untyped hash) -> (Symbol | bool)
@@ -82,6 +84,13 @@ module ConvertSdk
     ) -> Hash[String, untyped]?
 
     private
+
+    def assign_collaborators: (
+      BucketingManager? bucketing_manager,
+      RuleManager? rule_manager,
+      (^() -> untyped)? account_resolver,
+      (^() -> untyped)? project_resolver
+    ) -> void
 
     def dedup_and_mark: (String visitor_id, String goal_id, bool force) -> bool
 
