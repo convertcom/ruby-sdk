@@ -85,6 +85,20 @@ module ZeroTraceVector
   GOAL_KEY = "goal-without-rule"
   SEGMENT_KEY = "test-segments-1"
   SDK_KEY = "sdk-key-1"
+  # feature-1 is carried by BOTH the TARGET and OTHER experiences — the SAME
+  # pinned vector spec/integration/full_chain_spec.rb proves resolves to two
+  # ENABLED BucketedFeatures for visitor-1 under matching_attrs (FIX-2, review
+  # round 1). Reused here so run_feature/run_features resolve a REAL enabled
+  # feature on a preview context, proving the suppressed persist is a genuine
+  # suppression rather than a trivial absence.
+  FEATURE_KEY = "feature-1"
+  # visitor-1's natural (unforced) bucket for the TARGET experience — preview's
+  # forced short-circuit lives ONLY in #run_experience (context.rb, the
+  # `key == preview[:experience_key]` check), so feature resolution (which
+  # calls DataManager#get_bucketing directly, never through that check)
+  # decides the TARGET experience normally even on a preview context. Same
+  # pinned vector as full_chain_spec.rb's VAR_ID.
+  TARGET_NATURAL_VARIATION_ID = "100299457"
 end
 
 # Table for the segments-write-suppression group (AC6): three independent
@@ -103,6 +117,27 @@ ZERO_TRACE_SEGMENTS_WRITE_TABLE = [
     label: "run_custom_segments (the segment would otherwise match and attach)",
     action: lambda { |ctx|
       ctx.run_custom_segments([ZeroTraceVector::SEGMENT_KEY], { ruleData: { "enabled" => true } })
+    }
+  }
+].freeze
+
+# Table for the feature-resolution-still-decides-but-zero-trace group (AC6):
+# run_feature and run_features both resolve THROUGH FeatureManager ->
+# DataManager#get_bucketing (feature_manager.rb), never through
+# Context#run_experience's forced short-circuit, so this table proves the SAME
+# decision_attributes seam (enable_storage: @preview.nil?) suppresses
+# persistence for feature resolution too — not just experience decisioning.
+ZERO_TRACE_FEATURE_RESOLUTION_TABLE = [
+  {
+    label: "run_feature",
+    resolve: ->(ctx) { Array(ctx.run_feature(ZeroTraceVector::FEATURE_KEY)) }
+  },
+  {
+    label: "run_features",
+    resolve: lambda { |ctx|
+      ctx.run_features.select do |f|
+        f.key == ZeroTraceVector::FEATURE_KEY && f.status == ConvertSdk::FeatureStatus::ENABLED
+      end
     }
   }
 ].freeze
@@ -194,6 +229,21 @@ RSpec.describe "Context zero-trace suppression on a preview-active Context (RB-6
     end
   end
 
+  describe "run_experiences on a preview context (plural decisioning surface)" do
+    it "decides other experiences normally but enqueues nothing and persists no sticky bucketing" do
+      client = build_client
+      ctx = preview_context(client, "visitor-1")
+
+      results = ctx.run_experiences
+      other = results.find { |v| v.experience_id == other_exp_id }
+
+      expect(other).to be_a(ConvertSdk::BucketedVariation) # decisioning is NOT disabled
+      expect(other.id).to eq(other_variation_id)
+      expect(client.api_manager.queue.size).to eq(0) # bucketing enqueue suppressed for every decided variation
+      expect(stored_data_for(client, "visitor-1")).to be_nil # sticky persist suppressed for every decided variation
+    end
+  end
+
   describe "#track_conversion is a full no-op on a preview context" do
     it "enqueues nothing, fires no CONVERSION event, marks no dedup, and returns self" do
       client = build_client
@@ -237,6 +287,42 @@ RSpec.describe "Context zero-trace suppression on a preview-active Context (RB-6
 
       expect(ctx.attributes["custom_scratch"]).to eq("value")
       expect(stored_data_for(client, "preview-visitor-scratch")).to be_nil
+    end
+  end
+
+  describe "run_feature/run_features resolve a real carried feature on a preview context" do
+    ZERO_TRACE_FEATURE_RESOLUTION_TABLE.each do |row|
+      it "#{row[:label]} resolves feature-1 as ENABLED across both carrying experiences, zero trace" do
+        client = build_client
+        ctx = preview_context(client, "visitor-1")
+
+        enabled = row[:resolve].call(ctx)
+        by_exp = enabled.to_h { |f| [f.experience_id, f] }
+
+        # A real decision, not a trivial miss — both carrying experiences
+        # resolved (same pinned vector as full_chain_spec.rb's feature-1
+        # assertion), so the store/queue assertions below prove a genuine
+        # suppression rather than an accidental miss.
+        expect(enabled.size).to eq(2)
+        expect(by_exp[target_exp_id].variables["caption"]).to eq("Not allowed")
+        expect(by_exp[other_exp_id].variables["caption"]).to eq("Allowed")
+
+        expect(client.api_manager.queue.size).to eq(0)
+        expect(stored_data_for(client, "visitor-1")).to be_nil
+      end
+
+      it "#{row[:label]} DOES persist sticky bucketing on a NON-preview context (isolation cross-check)" do
+        client = build_client
+        ctx = client.create_context("visitor-1", matching_attrs)
+
+        enabled = row[:resolve].call(ctx)
+
+        expect(enabled.size).to eq(2) # same real decision as the preview case above
+        stored = stored_data_for(client, "visitor-1")
+        expect(stored).not_to be_nil
+        expect(stored["bucketing"][target_exp_id]).to eq(target_natural_variation_id)
+        expect(stored["bucketing"][other_exp_id]).to eq(other_variation_id)
+      end
     end
   end
 
