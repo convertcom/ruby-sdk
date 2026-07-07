@@ -64,6 +64,8 @@ module ConvertSdk
 
     def experience_by_key: (String key) -> Hash[String, untyped]?
 
+    def experience_by_id: (untyped experience_id) -> Hash[String, untyped]?
+
     def feature_by_key: (String key) -> Hash[String, untyped]?
 
     def goal_by_key: (String key) -> Hash[String, untyped]?
@@ -180,6 +182,8 @@ module ConvertSdk
     def collection: (String name) -> Array[untyped]
 
     def find_by_key: (Array[untyped] list, String key) -> Hash[String, untyped]?
+
+    def find_by_id: (Array[untyped] list, untyped entity_id) -> Hash[String, untyped]?
 
     def deep_freeze: (untyped node) -> untyped
   end

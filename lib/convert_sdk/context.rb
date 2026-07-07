@@ -86,6 +86,11 @@ module ConvertSdk
       # Deep-stringify the caller's attributes ONCE at the boundary; internals
       # only ever see string keys. nil → empty. The caller's hash is never mutated.
       @attributes = deep_stringify(attributes || {})
+      # qs-03 (RB-5) preview state — nil until {#set_preview} succeeds. A plain
+      # per-instance ivar (never a class/shared variable): two Contexts NEVER
+      # share this (AC7 isolation). Shape: +{experience_id:, variation_id:,
+      # experience:, experience_key:}+.
+      @preview = nil #: Hash[Symbol, untyped]?
     end
 
     # @return [String] the visitor id this context is bound to.
@@ -170,6 +175,69 @@ module ConvertSdk
       nil
     end
 
+    # Force a specific variation of an experience for THIS context — bypassing
+    # audiences, segments, locations, the environment check, experience status,
+    # variation status/traffic filters, stored decisions, and the bucketing
+    # hash for that experience only (qs-03 AC4/AC5). Mirrors JS
+    # +Context#setPreview+ (+context.ts:143-205+); this Ruby surface is
+    # synchronous — the +?exp=+ fallback fetch runs through
+    # {ApiManager#get_config_by_experience}, itself process-wide memoized for
+    # 60s (qs-03 AC8), so no async/await equivalent is needed here.
+    #
+    # == Resolution
+    #
+    # The CURRENT installed config is tried first, by id
+    # ({DataManager#experience_by_id}); when absent, a live
+    # +?exp={experience_id}+ fetch resolves it instead (never touches the
+    # installed config or the store — a previewed experience may be draft/
+    # paused and must never be cached alongside production config). The
+    # resolved experience is held BY REFERENCE, never duped or rebuilt:
+    # DataManager's installed config entities are already deep-frozen (Story
+    # 2.7), so simply holding the reference carries none of the JS SDK-7
+    # in-place-mutation risk (mutating a frozen Ruby Hash raises
+    # +FrozenError+ rather than silently corrupting shared state); a fetched
+    # experience is a brand-new object that is never installed anywhere, so it
+    # is never shared to begin with.
+    #
+    # == Inert on bad input (AC7)
+    #
+    # A blank +experience_id+/+variation_id+, an unresolvable experience
+    # (absent from both the installed config and the +?exp=+ fetch response),
+    # or an unknown +variation_id+ on the resolved experience all leave preview
+    # state UNSET (a +warn+ log, never a raise) — a subsequent
+    # {#run_experience} on this context decides exactly as if this method had
+    # never been called.
+    #
+    # == Isolation (AC7)
+    #
+    # Preview state lives on THIS +Context+ instance only (a plain ivar) — two
+    # +Context+s, even for the same client/config, never share it.
+    #
+    # Never raises into the host: an internal failure degrades to an +error+
+    # log + leaves preview state unset (NFR9).
+    #
+    # @param experience_id [String] the previewed experience's +id+.
+    # @param variation_id [String] the variation +id+ to force.
+    # @return [self]
+    def set_preview(experience_id:, variation_id:)
+      return warn_preview_inert("experience_id/variation_id required") if blank?(experience_id) || blank?(variation_id)
+
+      experience = resolve_preview_experience(experience_id)
+      return warn_preview_inert("no experience found for id=#{experience_id}") if experience.nil?
+
+      decision = @data_manager.get_preview_decision(experience, variation_id)
+      return warn_preview_inert("no variation found for id=#{variation_id}") if decision.nil?
+
+      @preview = {
+        experience_id: experience_id, variation_id: variation_id,
+        experience: experience, experience_key: experience["key"]
+      }
+      self
+    rescue StandardError => e
+      @log_manager.error("Context#set_preview: #{e.class}: #{e.message}")
+      self
+    end
+
     # Decide a single experience for this visitor and return its variation.
     #
     # The optional per-call +attributes+ are deep-stringified and merged OVER the
@@ -197,6 +265,16 @@ module ConvertSdk
     # NO bucketing event is enqueued (a +debug+ line records the suppression). The
     # global Config +tracking: false+ switch ALWAYS wins over a per-call +true+.
     #
+    # == Preview forcing (qs-03 AC4/AC5)
+    #
+    # When {#set_preview} has forced a variation for THIS +key+ on this context,
+    # that forced decision is returned DIRECTLY — bypassing decisioning entirely
+    # (no audience/location/environment/status/traffic/stored-decision/bucketing
+    # walk) and firing NO {SystemEvents::BUCKETING} event (mirrors JS
+    # +context.ts:228-235+). Because this check runs FIRST, it naturally takes
+    # precedence over a stored decision or fresh bucketing for that experience;
+    # every OTHER experience on this same context still decides normally.
+    #
     # @param key [String] the experience +key+.
     # @param attributes [Hash, nil] optional per-call visitor properties merged
     #   over the context attributes (deep-stringified). May carry +:enable_tracking+.
@@ -204,6 +282,9 @@ module ConvertSdk
     def run_experience(key, attributes = nil)
       manager = @experience_manager
       return RuleError::NO_DATA_FOUND if manager.nil?
+
+      preview = @preview
+      return forced_preview_variation(preview) if preview && key == preview[:experience_key]
 
       @data_manager.ensure_fresh_config!
       variation = manager.select_variation(@visitor_id, key, decision_attributes(attributes))
@@ -432,6 +513,60 @@ module ConvertSdk
     end
 
     private
+
+    # {#set_preview}'s inert-path helper: warn-log +detail+ under the
+    # +Context#set_preview+ prefix (the single log-message shape every inert
+    # branch shares — AC7) and return +self+ WITHOUT touching +@preview+ (a
+    # prior successful preview, if any, is left exactly as it was).
+    def warn_preview_inert(detail)
+      @log_manager.warn("Context#set_preview: #{detail}")
+      self
+    end
+
+    # {#run_experience}'s preview-forcing branch: force-decide THIS visitor's
+    # previewed variation via {DataManager#get_preview_decision}. +#set_preview+
+    # only ever stores a preview whose (experience, variation_id) pair already
+    # resolved a decision, and the resolved experience is a frozen Hash that can
+    # never drift afterward, so a nil result here is a defensive fallback, not
+    # an expected path.
+    def forced_preview_variation(preview)
+      @data_manager.get_preview_decision(preview[:experience], preview[:variation_id]) || RuleError::NO_DATA_FOUND
+    end
+
+    # Resolve the previewed experience for {#set_preview}: the installed
+    # config's by-id reader first ({DataManager#experience_by_id}); when
+    # absent, the +?exp=+ live-fetch fallback ({#fetch_preview_experience}).
+    def resolve_preview_experience(experience_id)
+      @data_manager.experience_by_id(experience_id) || fetch_preview_experience(experience_id)
+    end
+
+    # The +?exp={experience_id}+ fallback fetch ({ApiManager#get_config_by_experience},
+    # process-wide memoized for 60s — qs-03 AC8) for an experience absent from
+    # the installed config (e.g. a draft/paused preview target). A nil
+    # {ApiManager} (no Client-wired collaborator) or a failed fetch (the port
+    # never raises — it degrades to nil) both resolve to a miss here; the
+    # response's own +experiences+ collection is scanned by id (+to_s+
+    # compared, ids may arrive as different types).
+    def fetch_preview_experience(experience_id)
+      manager = @api_manager
+      return nil if manager.nil?
+
+      config = manager.get_config_by_experience(experience_id)
+      return nil unless config.is_a?(Hash)
+
+      experiences = config["experiences"]
+      return nil unless experiences.is_a?(Array)
+
+      target = experience_id.to_s
+      experiences.find { |candidate| candidate.is_a?(Hash) && candidate["id"].to_s == target }
+    end
+
+    # True for +nil+ or a (post-+#strip+) empty String — the blank-input guard
+    # for {#set_preview}'s +experience_id+/+variation_id+ (mirrors
+    # {Client#create_context}'s blank +visitor_id+ guard).
+    def blank?(value)
+      value.nil? || (value.respond_to?(:strip) && value.strip.empty?)
+    end
 
     # The single conversion seam (mirrors {#fire_bucketing}): enqueue the
     # wire-shaped event THEN fire the lifecycle event with +deferred: true+ (late

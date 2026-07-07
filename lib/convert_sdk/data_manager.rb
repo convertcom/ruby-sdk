@@ -295,6 +295,17 @@ module ConvertSdk
       find_by_key(experiences, key)
     end
 
+    # @param id [String] the experience +id+ to find (+to_s+ compared — ids may
+    #   arrive as Integer or String across the wire, e.g. a caller-supplied
+    #   +experience_id+ vs. the config's JSON-parsed +id+). Used by the qs-03
+    #   preview resolution ({Context#set_preview}) to look the previewed
+    #   experience up against the CURRENT installed config before falling back
+    #   to the +?exp=+ live fetch.
+    # @return [Hash, nil] the frozen experience with that id, or nil.
+    def experience_by_id(experience_id)
+      find_by_id(experiences, experience_id)
+    end
+
     # @param key [String] the feature +key+ to find.
     # @return [Hash, nil] the frozen feature with that key, or nil.
     def feature_by_key(key)
@@ -961,6 +972,14 @@ module ConvertSdk
     # +"key"+ (sparse fixture rows) simply never match. Returns the frozen entity.
     def find_by_key(list, key)
       list.find { |entity| entity.is_a?(Hash) && entity["key"] == key }
+    end
+
+    # Linear scan for the entity whose +"id"+ +to_s+-matches +id+. Mirrors
+    # {#find_by_key}; +to_s+ comparison because ids may arrive as different
+    # types across the wire (JSON Integer vs. a caller-supplied String).
+    def find_by_id(list, entity_id)
+      target = entity_id.to_s
+      list.find { |entity| entity.is_a?(Hash) && entity["id"].to_s == target }
     end
 
     # Build a recursively-frozen copy of +node+. Hashes and arrays are rebuilt
