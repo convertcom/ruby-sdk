@@ -2,6 +2,20 @@
 
 require "spec_helper"
 
+# RB-3 (qs-03 AC4 fetch resolution / AC8 memoization) —
+# #get_config_by_experience's query-param composition table. Top-level
+# constant (RuboCop forbids constants inside blocks — see
+# spec/unit/client_spec.rb for the same convention). Cross-product over
+# debug_token (set/unset) x environment (set/nil); exp=<id> and
+# _conv_low_cache=1 are asserted unconditionally in the example itself (never
+# part of the row) since the contract requires them ALWAYS present.
+CONFIG_BY_EXPERIENCE_URL_TABLE = {
+  "no environment, no debug_token" => { environment: nil, debug_token: nil },
+  "environment set, no debug_token" => { environment: "staging", debug_token: nil },
+  "no environment, debug_token set" => { environment: nil, debug_token: "tok-123" },
+  "environment set, debug_token set" => { environment: "staging", debug_token: "tok-123" }
+}.freeze
+
 RSpec.describe ConvertSdk::ApiManager do
   let(:sink) { CapturingSink.new }
   let(:log_manager) { ConvertSdk::LogManager.new(level: ConvertSdk::LogLevel::DEBUG, sink: sink) }
@@ -16,11 +30,16 @@ RSpec.describe ConvertSdk::ApiManager do
   # Track endpoint with the [project_id] placeholder so the builder must replace it.
   let(:track_endpoint) { "#{HttpStubs::TRACK_HOST}/[project_id]/v1" }
 
-  def build_api_manager(secret: nil, event_batch_size: 10, flush_interval: nil)
+  def build_api_manager(secret: nil, event_batch_size: 10, flush_interval: nil,
+                        sdk_key: "sdk-key-1", config_endpoint: HttpStubs::CONFIG_HOST,
+                        environment: nil, debug_token: nil)
     config = ConvertSdk::Config.new(
       data: vendored,
-      sdk_key: "sdk-key-1",
+      sdk_key: sdk_key,
       sdk_key_secret: secret,
+      config_endpoint: config_endpoint,
+      environment: environment,
+      debug_token: debug_token,
       track_endpoint: track_endpoint,
       event_batch_size: event_batch_size,
       flush_interval: flush_interval
@@ -32,6 +51,17 @@ RSpec.describe ConvertSdk::ApiManager do
       event_manager: event_manager,
       log_manager: log_manager
     )
+  end
+
+  # Parse a URL's query string into a plain Hash for param-presence/composition
+  # assertions (RB-3 / qs-03 AC4) — mirrors spec/unit/client_spec.rb's helper of
+  # the same name (kept per-file, matching that file's existing convention of
+  # not extracting this 5-line helper to spec/support).
+  def query_params(url)
+    query = URI.parse(url).query
+    return {} if query.nil?
+
+    URI.decode_www_form(query).to_h
   end
 
   # Subject: timer-off by default so the explicit-release/payload specs below are
@@ -481,6 +511,177 @@ RSpec.describe ConvertSdk::ApiManager do
       expect(manager.queue.size).to be <= 1000
       warns = sink.entries.filter_map { |level, message| message if level == :warn }
       expect(warns.grep(/VisitorsQueue#trim_to_cap/)).not_to be_empty
+    end
+  end
+
+  # RB-3 (qs-03 AC4 fetch resolution / AC8 memoization) — ApiManager#get_config_by_experience.
+  #
+  # JS oracle: packages/api/src/api-manager.ts#getConfigByExperience (branch
+  # feat/experiment-preview, commit b719795, ~line 344) — a module-level
+  # `configByExperienceCache` Map keyed `${sdkKey}:${experienceId}`, 60s TTL,
+  # query params ordered environment (when set) -> exp -> _conv_low_cache=1
+  # (always) -> debug_token (when set).
+  #
+  # The memo is PROCESS-WIDE (a module-level cache shared by every ApiManager
+  # instance — mirroring the JS module-level Map), so every example resets it
+  # via the (not-yet-implemented) `ApiManager.reset_config_by_experience_cache_for_tests!`
+  # test-only seam — guarded with `respond_to?` so this file loads/fails
+  # cleanly on the missing `#get_config_by_experience` method during the RED
+  # phase, before that reset seam exists, rather than failing inside the hook
+  # itself. Mirrors ForkGuard.reset_for_tests! (fork_guard.rb) — the SDK's only
+  # other process-wide-state test-reset precedent.
+  describe "#get_config_by_experience (RB-3 / qs-03 AC4 fetch resolution, AC8 memoization)" do
+    before do
+      if ConvertSdk::ApiManager.respond_to?(:reset_config_by_experience_cache_for_tests!)
+        ConvertSdk::ApiManager.reset_config_by_experience_cache_for_tests!
+      end
+    end
+
+    after do
+      if ConvertSdk::ApiManager.respond_to?(:reset_config_by_experience_cache_for_tests!)
+        ConvertSdk::ApiManager.reset_config_by_experience_cache_for_tests!
+      end
+    end
+
+    describe "URL composition (AC4)" do
+      CONFIG_BY_EXPERIENCE_URL_TABLE.each do |label, row|
+        it "always carries exp=<id> and _conv_low_cache=1 for #{label}" do
+          stub_vendored_config
+          manager = build_api_manager(environment: row[:environment], debug_token: row[:debug_token])
+
+          manager.get_config_by_experience("123")
+
+          params = query_params(captured_request.uri)
+          expect(params["exp"]).to eq("123")
+          expect(params["_conv_low_cache"]).to eq("1")
+          if row[:environment]
+            expect(params["environment"]).to eq(row[:environment])
+          else
+            expect(params).not_to have_key("environment")
+          end
+          if row[:debug_token]
+            expect(params["debug_token"]).to eq(row[:debug_token])
+          else
+            expect(params).not_to have_key("debug_token")
+          end
+        end
+      end
+
+      it "orders params as environment, then exp, then _conv_low_cache, then debug_token when all four compose" do
+        stub_vendored_config
+        manager = build_api_manager(environment: "staging", debug_token: "tok-123")
+
+        manager.get_config_by_experience("123")
+
+        expect(captured_request.uri).to eq(
+          "#{HttpStubs::CONFIG_HOST}/config/sdk-key-1?environment=staging&exp=123&_conv_low_cache=1&debug_token=tok-123"
+        )
+      end
+
+      it "fetches through @http_client with the Bearer auth header when a secret is configured" do
+        stub_vendored_config
+        manager = build_api_manager(secret: "topsecret")
+
+        manager.get_config_by_experience("123")
+
+        expect(captured_request.headers["Authorization"]).to eq("Bearer topsecret")
+      end
+    end
+
+    describe "memoization (AC8)" do
+      it "fires exactly one HTTP request for two lookups of the same (sdk_key, experience_id) within the TTL" do
+        stub_vendored_config
+        manager = build_api_manager
+
+        first = manager.get_config_by_experience("123")
+        second = manager.get_config_by_experience("123")
+
+        expect(captured_requests.size).to eq(1)
+        expect(second).to eq(first)
+        expect(first).to eq(vendored)
+      end
+    end
+
+    describe "key isolation" do
+      it "fetches again for a different experience_id on the same manager (no cross-experience collision)" do
+        stub_vendored_config
+        manager = build_api_manager
+
+        manager.get_config_by_experience("123")
+        manager.get_config_by_experience("456")
+
+        expect(captured_requests.size).to eq(2)
+      end
+
+      it "fetches again for the same experience_id under a different sdk_key (no cross-tenant collision)" do
+        stub_vendored_config(sdk_key: "sdk-key-1")
+        stub_vendored_config(sdk_key: "sdk-key-2")
+        manager_a = build_api_manager(sdk_key: "sdk-key-1")
+        manager_b = build_api_manager(sdk_key: "sdk-key-2")
+
+        manager_a.get_config_by_experience("123")
+        manager_b.get_config_by_experience("123")
+
+        expect(captured_requests.size).to eq(2)
+      end
+    end
+
+    # TTL is wall-clock (60s), per the qs-03 spec ("in-memory only ... TTL 60 s
+    # (in-memory only; never the store)") and the JS oracle's `Date.now()`.
+    # Stubbing `Time.now` (rather than injecting a `clock:` constructor seam)
+    # keeps every OTHER example in this file's `build_api_manager` call sites
+    # unaffected, and keeps this RED phase's failures uniformly attributable to
+    # the missing `#get_config_by_experience` method rather than an
+    # ArgumentError from an unrecognized constructor keyword. GREEN-phase note:
+    # the implementation's wall-clock TTL check MUST read `Time.now` (e.g.
+    # `Time.now.to_f`), not `Process.clock_gettime(Process::CLOCK_MONOTONIC)`,
+    # for these two examples to observe the stubbed clock.
+    describe "TTL expiry (60s wall clock)" do
+      it "refetches once the memoized entry is older than 60 seconds" do
+        stub_vendored_config
+        manager = build_api_manager
+        now = Time.now
+        allow(Time).to receive(:now) { now }
+
+        manager.get_config_by_experience("123")
+        now += 61
+        manager.get_config_by_experience("123")
+
+        expect(captured_requests.size).to eq(2)
+      end
+
+      it "does not refetch just short of 60 seconds (still memoized)" do
+        stub_vendored_config
+        manager = build_api_manager
+        now = Time.now
+        allow(Time).to receive(:now) { now }
+
+        manager.get_config_by_experience("123")
+        now += 59
+        manager.get_config_by_experience("123")
+
+        expect(captured_requests.size).to eq(1)
+      end
+    end
+
+    describe "no store interaction (AC8 — never the store)" do
+      it "never reads or writes the store while resolving or memoizing" do
+        store_spy = instance_double(ConvertSdk::DataStoreManager)
+        expect(store_spy).not_to receive(:get)
+        expect(store_spy).not_to receive(:set)
+        dm = ConvertSdk::DataManager.new(
+          log_manager: log_manager, data_store_manager: store_spy, config_key: "convert_sdk.config.sdk-key-1"
+        )
+        config = ConvertSdk::Config.new(data: vendored, sdk_key: "sdk-key-1", config_endpoint: HttpStubs::CONFIG_HOST)
+        manager = described_class.new(
+          config: config, data_manager: dm, http_client: http_client,
+          event_manager: event_manager, log_manager: log_manager
+        )
+        stub_vendored_config
+
+        manager.get_config_by_experience("123")
+        manager.get_config_by_experience("123") # second call within TTL — still no store touch
+      end
     end
   end
 end
