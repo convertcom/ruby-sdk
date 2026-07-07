@@ -863,7 +863,17 @@ module ConvertSdk
     # (atomic merge via DataStoreManager). Optionally also stores visitor
     # properties as segments (JS updateVisitorProperties path). In-memory store
     # ops only (NFR1; user-supplied Redis trades the no-disk contract).
+    #
+    # +attributes[:enable_storage]+ (qs-03 / RB-6 zero-trace) gates this write:
+    # a preview {Context} threads +enable_storage: false+ through
+    # {Context#decision_attributes} for the ENTIRE call (target AND other
+    # experiences), so a fresh decision made while previewing is never
+    # persisted. Absent (or any non-false value) defaults to +true+ — every
+    # existing non-preview caller (including direct {#get_bucketing} unit
+    # calls with a bare +{}+ attributes hash) is unaffected.
     def persist_bucketing(visitor_id, experience_id, variation_id, attributes)
+      return unless attributes.fetch(:enable_storage, true)
+
       manager = @data_store_manager
       return if manager.nil?
 

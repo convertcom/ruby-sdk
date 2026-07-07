@@ -44,6 +44,16 @@ module ConvertSdk
   # (Story 2.1) into +StoreData["segments"]+. Stored data is string-keyed
   # wire-world by design (so Epic 4's payload builder needs zero translation).
   #
+  # == Zero-trace preview gate (qs-03 / RB-6)
+  #
+  # {#put_segments} and {#select_custom_segments} accept an +enable_storage:+
+  # keyword (default +true+) that suppresses ONLY the persistence write above —
+  # filtering / rule MATCHING is never affected. {Context#set_default_segments}
+  # and {Context#run_custom_segments} thread +!@preview+ through it so a
+  # preview-active context leaves zero trace in the store while still
+  # evaluating segment rules normally (mirrors JS SDK-6,
+  # +segments-manager.ts:74-174+).
+  #
   # @api private
   class SegmentsManager
     # The +customSegments+ wire key — byte-identical to JS
@@ -89,12 +99,18 @@ module ConvertSdk
     #
     # @param visitor_id [String]
     # @param segments [Hash] the candidate report-segments (string-keyed wire shape).
+    # @param enable_storage [Boolean] when +false+, suppress ONLY the persistence
+    #   write below — the filtering above still runs identically. Threaded by
+    #   {Context#set_default_segments} as +!@preview+ (qs-03 / RB-6 zero-trace);
+    #   mirrors JS +SegmentsManager#putSegments+'s +enableStorage+ param
+    #   (JS SDK-6, +segments-manager.ts:74-89+). Defaults to +true+ (every
+    #   pre-qs-03 caller is unaffected).
     # @return [void]
-    def put_segments(visitor_id, segments)
+    def put_segments(visitor_id, segments, enable_storage: true)
       report_segments = filter_report_segments(segments)
       return if report_segments.empty?
 
-      merge_segments(visitor_id, report_segments)
+      merge_segments(visitor_id, report_segments) if enable_storage
       nil
     end
 
@@ -113,11 +129,17 @@ module ConvertSdk
     # @param segment_rule [Hash, nil] the visitor data the segment rules match
     #   against; +nil+ attaches every resolved segment unconditionally (JS:
     #   +if (!segmentRule || segmentsMatched)+).
+    # @param enable_storage [Boolean] when +false+, suppress ONLY the eventual
+    #   {#put_segments} persistence write — rule MATCHING (and a propagated
+    #   {RuleError}) is unaffected. Threaded by {Context#run_custom_segments} as
+    #   +!@preview+ (qs-03 / RB-6 zero-trace); mirrors JS
+    #   +SegmentsManager#selectCustomSegments+'s +enableStorage+ param
+    #   (JS SDK-6, +segments-manager.ts:156-174+). Defaults to +true+.
     # @return [Hash, Sentinel, nil] the updated segments hash, a propagated
     #   {RuleError}, or +nil+ when nothing matched.
-    def select_custom_segments(visitor_id, segment_keys, segment_rule = nil)
+    def select_custom_segments(visitor_id, segment_keys, segment_rule = nil, enable_storage: true)
       segments = lookup_segments(segment_keys)
-      set_custom_segments(visitor_id, segments, segment_rule)
+      set_custom_segments(visitor_id, segments, segment_rule, enable_storage: enable_storage)
     end
 
     private
@@ -163,8 +185,9 @@ module ConvertSdk
     # For each resolved segment: when a rule is supplied and nothing has matched
     # yet, walk the segment's rules — a {RuleError} sentinel short-circuits and
     # propagates out. On a match (or when no rule was supplied) append the segment
-    # id unless already stored. A non-empty append is persisted via {#put_segments}.
-    def set_custom_segments(visitor_id, segments, segment_rule)
+    # id unless already stored. A non-empty append is persisted via {#put_segments}
+    # (gated on +enable_storage+ — see {#select_custom_segments}).
+    def set_custom_segments(visitor_id, segments, segment_rule, enable_storage: true)
       existing = stored_custom_segments(visitor_id)
       segment_ids = [] #: Array[String]
       matched = false #: (bool | Sentinel)
@@ -180,7 +203,7 @@ module ConvertSdk
         append_segment_id(segment, existing, segment_ids)
       end
 
-      persist_custom_segments(visitor_id, existing, segment_ids)
+      persist_custom_segments(visitor_id, existing, segment_ids, enable_storage: enable_storage)
     end
 
     # Append +segment["id"]+ (stringified) to the pending list unless it is already
@@ -199,15 +222,16 @@ module ConvertSdk
 
     # Persist the newly-matched ids (appended to the existing list) into
     # +StoreData["segments"]["customSegments"]+, or no-op + debug when nothing
-    # matched (JS +SEGMENTS_NOT_FOUND+). Returns the persisted segments hash or nil.
-    def persist_custom_segments(visitor_id, existing, segment_ids)
+    # matched (JS +SEGMENTS_NOT_FOUND+). Returns the persisted segments hash or
+    # nil. +enable_storage+ passes straight through to {#put_segments}.
+    def persist_custom_segments(visitor_id, existing, segment_ids, enable_storage: true)
       if segment_ids.empty?
         @log_manager&.debug("SegmentsManager#set_custom_segments: no segments matched")
         return nil
       end
 
       segments_data = { CUSTOM_SEGMENTS => existing + segment_ids }
-      put_segments(visitor_id, segments_data)
+      put_segments(visitor_id, segments_data, enable_storage: enable_storage)
       segments_data
     end
 

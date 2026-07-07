@@ -110,12 +110,25 @@ module ConvertSdk
     # +{segments: props}+ — +context.ts:482+). The merge is atomic per visitor:
     # the read-modify-write runs inside the store manager's merge mutex.
     #
+    # == Zero-trace under preview (qs-03 AC6, RB-6)
+    #
+    # On a preview-active context ONLY the store write below is skipped — the
+    # in-memory +@attributes+ merge always applies (JS parity: JS's public
+    # +updateVisitorProperties+ has no preview guard of its own, but the
+    # PRIVATE helper it calls to persist DOES skip entirely under preview —
+    # +context.ts:626-629+, +if (this._preview) return;+ — leaving the
+    # in-memory side unaffected there too). "Per-context scratch" per the
+    # qs-03 spec: a later decision on THIS context still sees the merge; no
+    # trace of it ever reaches the store.
+    #
     # @param properties [Hash] the properties to merge (symbol or string keys).
     # @return [self]
     def update_visitor_properties(properties)
       normalised = deep_stringify(properties || {})
-      @data_store_manager.merge_visitor_data(account_key, project_key, @visitor_id) do |_current|
-        { "segments" => normalised }
+      if @preview.nil?
+        @data_store_manager.merge_visitor_data(account_key, project_key, @visitor_id) do |_current|
+          { "segments" => normalised }
+        end
       end
       @attributes = @attributes.merge(normalised)
       self
@@ -275,6 +288,21 @@ module ConvertSdk
     # precedence over a stored decision or fresh bucketing for that experience;
     # every OTHER experience on this same context still decides normally.
     #
+    # == Zero-trace on OTHER experiences under preview (qs-03 AC6, RB-6)
+    #
+    # When THIS context has a preview active but +key+ is NOT the previewed
+    # experience, decisioning proceeds NORMALLY — only tracking/persistence are
+    # suppressed: {#decision_attributes} threads +enable_storage: false+ so
+    # {DataManager#persist_bucketing} never writes sticky StoreData, and the
+    # per-call tracking verdict is forced +false+ so {#fire_bucketing}'s
+    # {#suppress_bucketing_enqueue?} skips the outbound enqueue. A deliberate
+    # Ruby/JS divergence: JS (+context.ts:260+) ALSO wraps the
+    # {SystemEvents::BUCKETING} lifecycle-event fire in +if (!this._preview)+;
+    # Ruby's {#fire_bucketing} doc (Story 4.5) establishes that event as pure
+    # decisioning observability, orthogonal to the tracking switch — so it
+    # ALWAYS fires here too, preview or not. Zero-trace is defined over track
+    # REQUESTS + STORE writes, not the in-process pub/sub event.
+    #
     # @param key [String] the experience +key+.
     # @param attributes [Hash, nil] optional per-call visitor properties merged
     #   over the context attributes (deep-stringified). May carry +:enable_tracking+.
@@ -288,7 +316,8 @@ module ConvertSdk
 
       @data_manager.ensure_fresh_config!
       variation = manager.select_variation(@visitor_id, key, decision_attributes(attributes))
-      fire_bucketing(key, variation, track: tracking_enabled_for_call?(attributes)) unless variation.is_a?(Sentinel)
+      track = preview.nil? && tracking_enabled_for_call?(attributes)
+      fire_bucketing(key, variation, track: track) unless variation.is_a?(Sentinel)
       variation
     rescue StandardError => e
       @log_manager.error("Context#run_experience: #{e.class}: #{e.message}")
@@ -311,6 +340,14 @@ module ConvertSdk
     # enqueue for THIS call (decisioning + sticky writes unaffected); the global
     # Config +tracking: false+ switch always wins (Story 4.5).
     #
+    # On a preview-active context (qs-03 AC6, RB-6) every decided variation here
+    # (none of which can be the previewed experience — {#run_experience} is the
+    # ONLY forced-decision path) is zero-trace exactly like {#run_experience}'s
+    # OTHER-experience branch: {#decision_attributes} suppresses the sticky
+    # persist and the per-variation tracking verdict is forced +false+. The
+    # {SystemEvents::BUCKETING} event still fires per variation (see
+    # {#run_experience}'s doc for the Ruby/JS divergence rationale).
+    #
     # @param attributes [Hash, nil] optional per-call visitor properties merged
     #   over the context attributes (deep-stringified). May carry +:enable_tracking+.
     # @return [Array<BucketedVariation>] the frozen variations (misses excluded).
@@ -320,7 +357,7 @@ module ConvertSdk
 
       @data_manager.ensure_fresh_config!
       variations = manager.select_variations(@visitor_id, decision_attributes(attributes))
-      track = tracking_enabled_for_call?(attributes)
+      track = @preview.nil? && tracking_enabled_for_call?(attributes)
       variations.each { |variation| fire_bucketing(variation.experience_key, variation, track: track) }
       variations
     rescue StandardError => e
@@ -409,6 +446,12 @@ module ConvertSdk
     # NO lifecycle event fires on segment attachment (JS parity — neither
     # +setDefaultSegments+ nor +runCustomSegments+ fire +SystemEvents.SEGMENTS+).
     #
+    # == Zero-trace under preview (qs-03 AC6, RB-6)
+    #
+    # +enable_storage: @preview.nil?+ threads through to
+    # {SegmentsManager#put_segments}, suppressing ONLY the persistence write
+    # (mirrors JS SDK-6, +context.ts:571+ — +!this._preview+ passed the same way).
+    #
     # Never raises into the host: a failure degrades to an +error+ log and returns
     # +self+ (NFR9).
     #
@@ -418,7 +461,7 @@ module ConvertSdk
       manager = @segments_manager
       return self if manager.nil?
 
-      manager.put_segments(@visitor_id, deep_stringify(segments || {}))
+      manager.put_segments(@visitor_id, deep_stringify(segments || {}), enable_storage: @preview.nil?)
       self
     rescue StandardError => e
       @log_manager.error("Context#set_default_segments: #{e.class}: #{e.message}")
@@ -436,6 +479,13 @@ module ConvertSdk
     #
     # NO lifecycle event fires on attachment (JS parity, F-014).
     #
+    # == Zero-trace under preview (qs-03 AC6, RB-6)
+    #
+    # +enable_storage: @preview.nil?+ threads through to
+    # {SegmentsManager#select_custom_segments}, suppressing ONLY the persistence
+    # write — rule MATCHING still runs exactly as normal (mirrors JS SDK-6,
+    # +context.ts:610+ — +!this._preview+ passed the same way).
+    #
     # Never raises into the host: a failure degrades to an +error+ log + +nil+ (NFR9).
     #
     # @param segment_keys [Array<String>] the segment keys to evaluate.
@@ -447,7 +497,9 @@ module ConvertSdk
       manager = @segments_manager
       return nil if manager.nil?
 
-      result = manager.select_custom_segments(@visitor_id, segment_keys, visitor_properties(attributes))
+      result = manager.select_custom_segments(
+        @visitor_id, segment_keys, visitor_properties(attributes), enable_storage: @preview.nil?
+      )
       result.is_a?(Sentinel) ? result : nil
     rescue StandardError => e
       @log_manager.error("Context#run_custom_segments: #{e.class}: #{e.message}")
@@ -489,6 +541,14 @@ module ConvertSdk
     # @param force_multiple_transactions [Boolean] bypass the per-goal dedup check.
     # @return [self]
     def track_conversion(goal_key, goal_data: nil, force_multiple_transactions: false)
+      # qs-03 (RB-6) — zero-trace: a preview-active context is a FULL no-op here,
+      # checked BEFORE the global tracking gate below (and BEFORE
+      # DataManager#convert) so NOTHING happens — no enqueue, no CONVERSION
+      # event, and no dedup mark (the mark lives inside #convert's atomic
+      # dedup-and-mark, never reached). Mirrors JS +context.ts:512-519+
+      # (+if (this._preview) return;+ at the top of +trackConversion+).
+      return self if @preview
+
       # Story 4.5 — the global tracking gate sits BEFORE DataManager#convert so a
       # suppressed conversion neither enqueues NOR marks dedup (the goals[goalId]
       # mark lives inside #convert's atomic dedup-and-mark). A subsequent same-goal
@@ -626,12 +686,21 @@ module ConvertSdk
     # it never defaults location matching to the visitor properties) — supplied
     # only when the caller passes +location_properties+/+"location_properties"+.
     # +environment+ is lifted out so the flow's environment-match step sees it.
+    #
+    # +enable_storage: @preview.nil?+ (qs-03 / RB-6 zero-trace) rides along on
+    # EVERY decision built through this ONE seam — {#run_experience},
+    # {#run_experiences}, {#run_feature}, and {#run_features} all call it — so a
+    # preview-active context's ENTIRE decisioning surface (not just experiences)
+    # never persists sticky StoreData ({DataManager#persist_bucketing}'s gate).
+    # Absent preview (the overwhelming default), this is always +true+ —
+    # byte-identical to the pre-qs-03 behavior.
     def decision_attributes(per_call)
       merged = @attributes.merge(deep_stringify(per_call || {}))
       {
         visitor_properties: merged,
         location_properties: merged["location_properties"],
-        environment: merged["environment"]
+        environment: merged["environment"],
+        enable_storage: @preview.nil?
       }
     end
 
