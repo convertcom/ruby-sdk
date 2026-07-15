@@ -82,7 +82,10 @@ module ConvertSdk
       tracking: true,
       # HTTP client timeouts in seconds (consumed by HttpClient, Story 1.5).
       open_timeout: 5,
-      read_timeout: 10
+      read_timeout: 10,
+      # Network cache-level signal (qs-02); nil is a no-op, "low" appends the
+      # platform's low-cache query param to config-fetch URLs.
+      cache_level: nil
     }.freeze
 
     # @!attribute [r] sdk_key
@@ -121,11 +124,14 @@ module ConvertSdk
     #   @return [Numeric] HTTP connect timeout seconds (HttpClient, NFR3).
     # @!attribute [r] read_timeout
     #   @return [Numeric] HTTP read timeout seconds (HttpClient, NFR3).
+    # @!attribute [r] cache_level
+    #   @return [String, nil] network cache-level signal (JS +network.cacheLevel+);
+    #     nil is a no-op, "low" appends a low-cache signal to config fetches (qs-02).
     attr_reader :sdk_key, :sdk_key_secret, :data, :environment,
                 :config_endpoint, :track_endpoint, :max_traffic, :hash_seed,
                 :data_refresh_interval, :event_batch_size, :flush_interval,
                 :keys_case_sensitive, :negation, :log_level, :tracking,
-                :open_timeout, :read_timeout
+                :open_timeout, :read_timeout, :cache_level
 
     # Build a validated configuration from snake_case keyword options merged over
     # {DEFAULTS}. Raises +ArgumentError+ (the SDK's only raising surface) on any

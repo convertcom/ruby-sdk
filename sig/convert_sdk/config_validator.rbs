@@ -2,6 +2,7 @@ module ConvertSdk
   # The fail-fast validation rules for Config — the SDK's only raising surface.
   class ConfigValidator
     LOG_LEVEL_VALUES: Array[Integer]
+    CACHE_LEVEL_VALUES: Array[String?]
 
     @values: Hash[Symbol, untyped]
 
@@ -22,6 +23,8 @@ module ConvertSdk
     def validate_booleans!: () -> void
 
     def validate_log_level!: () -> void
+
+    def validate_cache_level!: () -> void
 
     def require_string: (Symbol name, untyped value) -> void
 

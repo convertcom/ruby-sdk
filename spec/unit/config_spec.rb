@@ -31,7 +31,10 @@ CONFIG_DEFAULTS_TABLE = {
   log_level: ConvertSdk::LogLevel::DEBUG,
   tracking: true,
   open_timeout: 5,
-  read_timeout: 10
+  read_timeout: 10,
+  # qs-02 (RB-1): network cache-level signal — default nil (no-op); config-side
+  # validation/reader only here, URL composition is RB-2 (out of scope).
+  cache_level: nil
 }.freeze
 
 # Each option => a non-default override value, to prove every option is settable
@@ -53,8 +56,29 @@ CONFIG_OVERRIDE_TABLE = {
   log_level: ConvertSdk::LogLevel::WARN,
   tracking: false,
   open_timeout: 3,
-  read_timeout: 7
+  read_timeout: 7,
+  # qs-02 (RB-1): the only non-default accepted value.
+  cache_level: "low"
 }.freeze
+
+# qs-02 (RB-1): values cache_level must reject — nil / "low" are the only
+# accepted values (AC3). Kept as a plain array rather than folded into
+# CONFIG_INVALID_TABLE below because each case needs THREE independent
+# message assertions (names the option, AND mentions both allowed values)
+# instead of the single regex the rest of the matrix uses. A single combined
+# regex via chained lookaheads is NOT safe here: verified empirically that
+# Ruby's regex engine (Onigmo, pinned CRuby 3.3.0) can report a false match
+# for `(?=.*a)(?=.*b)` against strings containing NEITHER substring, e.g.
+# `"hello_level" =~ /(?=.*level)(?=.*xyz)/ # => 2` even though "xyz" is
+# absent — so three independent single-literal `match` calls are used
+# instead (each verified safe in isolation).
+CACHE_LEVEL_INVALID_VALUES = [
+  "high", # wrong string — only "low" is a valid non-nil value
+  "LOW",  # case-sensitive — only lowercase "low" matches
+  "",     # empty string
+  :low,   # symbol, not a String
+  1       # Integer, not a String
+].freeze
 
 # Validation matrix: each invalid kwargs payload => a Regexp the raised
 # ArgumentError message must match (proves the message names the offending
@@ -171,6 +195,17 @@ RSpec.describe ConvertSdk::Config do
     end
   end
 
+  describe "cache_level (qs-02 network cache-level option, RB-1 — config validation only)" do
+    # Omitted-from-config-options -> nil default, and "low" -> accepted are
+    # already exercised by the CONFIG_DEFAULTS_TABLE / CONFIG_OVERRIDE_TABLE
+    # sweeps above (cache_level is a row in both). The one acceptance shape
+    # those sweeps don't cover is passing nil *explicitly*, which is not the
+    # same code path as omitting the key.
+    it "accepts an explicit nil (same no-op as the default)" do
+      expect(build(cache_level: nil).cache_level).to be_nil
+    end
+  end
+
   describe "data-mode presence (AC#3)" do
     it "is constructible with data only and no sdk_key" do
       expect { described_class.new(data: { "experiences" => [] }) }.not_to raise_error
@@ -194,6 +229,20 @@ RSpec.describe ConvertSdk::Config do
 
     it "raises stdlib ArgumentError (no custom exception subclass)" do
       expect { described_class.new }.to(raise_error { |error| expect(error.class).to eq(ArgumentError) })
+    end
+
+    # qs-02 (RB-1): cache_level's allow-list (nil / "low") gets its own loop —
+    # see the CACHE_LEVEL_INVALID_VALUES comment above for why a single
+    # combined-lookahead regex isn't used for the "names both allowed values"
+    # assertion.
+    CACHE_LEVEL_INVALID_VALUES.each do |bad_value|
+      it "raises ArgumentError naming both allowed values for cache_level #{bad_value.inspect}" do
+        expect { described_class.new(sdk_key: "k", cache_level: bad_value) }.to(raise_error(ArgumentError) do |error|
+          expect(error.message).to match(/cache_level/i)
+          expect(error.message).to match(/nil/i)
+          expect(error.message).to match(/low/i)
+        end)
+      end
     end
   end
 
