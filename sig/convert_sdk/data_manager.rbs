@@ -111,6 +111,8 @@ module ConvertSdk
 
     def stored_bucketing_map: (String visitor_id) -> Hash[String, untyped]
 
+    def mutual_exclusion_resolver: (String visitor_id) -> (^(untyped target_experience_key) -> bool?)
+
     def match_rules_by_field: (String visitor_id, String experience_key, Hash[Symbol, untyped] attributes) -> (Hash[String, untyped] | Sentinel | nil)
 
     def eligible_experience: (String experience_key, untyped environment) -> Hash[String, untyped]?
@@ -141,11 +143,11 @@ module ConvertSdk
 
     def match_site_area: (untyped location_properties, untyped site_area) -> (bool | Sentinel)
 
-    def match_audiences: (Hash[String, untyped] experience, untyped visitor_properties, bool is_bucketed) -> (bool | Sentinel)
+    def match_audiences: (Hash[String, untyped] experience, untyped visitor_properties, bool is_bucketed, ^(untyped) -> bool? resolver) -> (bool | Sentinel)
 
     def audiences_to_check: (Hash[String, untyped] experience, bool is_bucketed) -> Array[Hash[String, untyped]]
 
-    def matched_audiences: (Array[Hash[String, untyped]] to_check, untyped visitor_properties) -> (Array[Hash[String, untyped]] | Sentinel)
+    def matched_audiences: (Array[Hash[String, untyped]] to_check, untyped visitor_properties, ^(untyped) -> bool? resolver) -> (Array[Hash[String, untyped]] | Sentinel)
 
     def audiences_verdict?: (Hash[String, untyped] experience, Array[Hash[String, untyped]] matched, Array[Hash[String, untyped]] to_check) -> bool
 
