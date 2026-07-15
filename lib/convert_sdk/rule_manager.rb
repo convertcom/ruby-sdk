@@ -178,10 +178,19 @@ module ConvertSdk
     #   THEN apply negation like any other known outcome.
     # * Resolver present, target key resolved to +true+/+false+: that is
     #   +bucketed_raw+; negation applies on top of it as usual.
+    # * +rule["matching"]+ is malformed — a non-Hash, non-+nil+ value (e.g. a
+    #   stray +match_type+ string) OR the +matching+ key missing entirely: this
+    #   leaf skips +valid_rule?+ (unlike the generic path), so the malformed
+    #   shape is guarded here directly. Fails closed to +false+, negation
+    #   UNAPPLIED, and the resolver is NEVER invoked — mirrors the "no resolver
+    #   injected" case's fail-closed spirit for a leaf that cannot be trusted.
     def process_mutual_exclusion_rule(rule, resolver)
       return false unless resolver
 
-      negated = rule.dig("matching", "negated") || false
+      matching = rule["matching"]
+      return false unless matching.is_a?(Hash)
+
+      negated = matching["negated"] || false
       target_key = rule["value"]
       raw = resolver.call(target_key)
 

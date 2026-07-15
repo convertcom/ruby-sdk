@@ -248,6 +248,40 @@ RSpec.describe ConvertSdk::RuleManager do
     end
   end
 
+  describe "#is_rule_matched — bucketed_into_experience_key with a malformed `matching` value " \
+           "(code-review finding, confidence 78 — FR22 fail-closed, never raise)" do
+    # `rule["matching"]` is NOT validated to be a Hash before `process_rule_item`
+    # dispatches a `bucketed_into_experience_key` leaf straight to
+    # `process_mutual_exclusion_rule` (it bypasses `valid_rule?` entirely,
+    # unlike every generic leaf). A non-Hash, non-nil `matching` (or a missing
+    # `matching` key) must fail closed to `false` and must NEVER consult the
+    # injected resolver — proven here with a resolver double that WOULD return
+    # `true` if it were ever called.
+    def never_called_resolver
+      lambda do |_target_key|
+        raise "resolver must never be called for a malformed `matching` leaf"
+      end
+    end
+
+    it "returns false (never raises) when `matching` is a non-Hash, non-nil value" do
+      rule = { "rule_type" => "bucketed_into_experience_key", "matching" => "equals", "value" => "exp-a" }
+      rs = wrap_single_leaf(rule)
+
+      result = nil
+      expect { result = manager.is_rule_matched({}, rs, nil, resolver: never_called_resolver) }.not_to raise_error
+      expect(result).to be(false)
+    end
+
+    it "returns false (never raises) when the `matching` key is missing entirely" do
+      rule = { "rule_type" => "bucketed_into_experience_key", "value" => "exp-a" }
+      rs = wrap_single_leaf(rule)
+
+      result = nil
+      expect { result = manager.is_rule_matched({}, rs, nil, resolver: never_called_resolver) }.not_to raise_error
+      expect(result).to be(false)
+    end
+  end
+
   describe "#is_rule_matched — generic-rule regression lock (AC7)" do
     let(:data) { { "country" => "US", "browser" => "chrome" } }
     let(:generic_rs) do

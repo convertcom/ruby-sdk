@@ -96,6 +96,30 @@ RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
     end
   end
 
+  describe "AC1 — fixture row 5 fidelity: a stored bucketing entry for a DIFFERENT experience " \
+           "(exp-b itself) must not falsely satisfy an exclusion rule targeting exp-a" do
+    it "buckets normally into exp-b even once the visitor's stored bucketing map already holds " \
+       "an entry for exp-b (not exp-a) — proves the resolver checks exp-a's id specifically, " \
+       "not \"map non-empty\" (qs-04 row 5: {\"100222\":\"100902\"}, target exp-a, negated true, " \
+       "expected matched TRUE)" do
+      _, em = build
+      visitor = "visitor-row5-fidelity"
+
+      first = em.select_variation(visitor, MutualExclusionFixture::EXP_B_KEY, attrs)
+      expect(first).to be_a(ConvertSdk::BucketedVariation)
+      expect(first.id).to eq(MutualExclusionFixture::EXP_B_VARIATION_ID)
+
+      stored = dsm.get(store_key(visitor))
+      expect(stored["bucketing"]).to eq(
+        { MutualExclusionFixture::EXP_B_ID => MutualExclusionFixture::EXP_B_VARIATION_ID }
+      )
+
+      second = em.select_variation(visitor, MutualExclusionFixture::EXP_B_KEY, attrs)
+      expect(second).to be_a(ConvertSdk::BucketedVariation)
+      expect(second.id).to eq(MutualExclusionFixture::EXP_B_VARIATION_ID)
+    end
+  end
+
   describe "AC3 — store persistence across two independent DataManager/ExperienceManager " \
            "instances (row 8), via the shipped RedisStore contract" do
     # A single shared persistent store (the shipped RedisStore wrapping a
