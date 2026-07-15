@@ -2,10 +2,10 @@
 
 require "spec_helper"
 
-# qs-04 (RB-2, RED) — DataManager wiring for the +bucketed_into_experience_key+
+# qs-04 (RB-2) — DataManager wiring for the +bucketed_into_experience_key+
 # mutual-exclusion rule: the REAL resolver (built from
-# +DataManager#experience_by_key+ + the visitor's stored bucketing map) threaded
-# from +match_rules_by_field+ (which has +visitor_id+) down through
+# +DataManager#experience_by_key+ + the visitor's stored bucketing map) is
+# threaded from +match_rules_by_field+ (which has +visitor_id+) down through
 # +match_audiences+ -> +matched_audiences+ -> +RuleManager#is_rule_matched+.
 #
 # Spec of record: _bmad-output/planning-artifacts/2026-06-05-convert-ruby-sdk/
@@ -13,45 +13,32 @@ require "spec_helper"
 #   persistence, row 8), AC4 (zero new inputs), AC5 (read-only), AC6
 #   (ALL/ANY combination), AC8 (unknown-target warning).
 #
-# RB-1 (merged, GREEN) already proved RuleManager applies the contract exactly
-# GIVEN a resolver: it accepts an optional `resolver:` keyword threaded through
-# the whole OR/AND/OR_WHEN walk, and a `bucketed_into_experience_key` leaf falls
+# RB-1 (merged) proved RuleManager applies the contract exactly GIVEN a
+# resolver: it accepts an optional `resolver:` keyword threaded through the
+# whole OR/AND/OR_WHEN walk, and a `bucketed_into_experience_key` leaf falls
 # closed to `false` (negation UNAPPLIED) when NO resolver is threaded at all
 # (spec/unit/rule_manager_mutual_exclusion_spec.rb).
 #
-# THIS file is RB-2: DataManager does not yet build or thread that resolver
-# through `match_rules_by_field` -> `match_audiences` -> `matched_audiences` ->
-# `RuleManager#is_rule_matched`. Every audience carrying this rule type
-# therefore evaluates it through the CURRENT no-resolver fallback above —
-# fail-closed, negation never applied — regardless of the visitor's actual
-# stored bucketing state.
+# THIS file is RB-2: DataManager builds that resolver
+# (`mutual_exclusion_resolver`, lib/convert_sdk/data_manager.rb:551-558) and
+# threads it through `match_rules_by_field` -> `match_audiences` ->
+# `matched_audiences` -> `RuleManager#is_rule_matched`
+# (lib/convert_sdk/data_manager.rb:582-583). Every audience carrying this rule
+# type is evaluated against the visitor's actual stored bucketing state via
+# the wired resolver.
 #
-# ## Why some examples below coincidentally PASS today (read before "fixing")
+# The examples below lock in the real, resolver-backed exclusion behavior:
+#   * A visitor already bucketed into the target experience is excluded from
+#     the gated experience (subject to negation).
+#   * A visitor who never ran the target experience buckets into the gated
+#     experience normally.
+#   * An unresolvable/unknown target dissolves the leaf and logs a warning
+#     naming the key (AC8), while still applying negation to the dissolved
+#     `false`.
 #
-# The no-resolver fallback ALWAYS evaluates the mutual-exclusion leaf to
-# `false` (never negated), so today an audience gated by a single such leaf
-# under ALL always fails to match, and the gated experience is ALWAYS excluded
-# — independent of whether the visitor actually ran the target experience.
-# Concretely:
-#   * Every example that expects the visitor to be EXCLUDED coincidentally
-#     matches this fail-closed default and passes RIGHT NOW, even with zero
-#     RB-2 wiring.
-#   * Every example that expects the visitor to be INCLUDED (never ran the
-#     target; the unknown-target dissolve; an ANY-combined generic leaf
-#     rescuing the match) is the genuine RED signal: it FAILS today because
-#     the fail-closed default wrongly excludes them too.
-# Each `it` block below is annotated with which regime it falls into. This
-# mirrors the exact caveat RB-1's own spec documents for the RuleManager-level
-# no-resolver fallback — DataManager's wiring gap manifests as WRONG DECISIONS,
-# not as an exception, so the RED signal here is functional, not structural.
-#
-# AC5's read-only assertions are a SAFETY INVARIANT, not a wiring-gap probe:
-# they hold both before AND after RB-2 lands (today vacuously, because the
-# fail-closed default never even reaches the bucketing/persistence steps for
-# the gated experience; post-wiring, because the real resolver is genuinely
-# read-only). They are included here so GREEN cannot regress the invariant.
-#
-# NO lib/ or sig/ changes ship alongside this RED spec file.
+# AC5's read-only assertions are a SAFETY INVARIANT: the resolver never
+# buckets the target experience, never writes to the store, and never fires a
+# track/event enqueue while evaluating the exclusion rule.
 RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
   let(:sink) { CapturingSink.new }
   let(:log_manager) { ConvertSdk::LogManager.new(level: ConvertSdk::LogLevel::TRACE, sink: sink) }
@@ -87,8 +74,7 @@ RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
   end
 
   describe "AC2 — end-to-end exclusion (+ AC4 — empty visitor attributes throughout)" do
-    it "COINCIDENTAL PASS TODAY (fail-closed default): a visitor already bucketed into exp-a " \
-       "is excluded from exp-b" do
+    it "a visitor already bucketed into exp-a is excluded from exp-b" do
       _, em = build
       visitor = "visitor-ran-a"
 
@@ -100,7 +86,7 @@ RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
       expect(b_decision).to be(ConvertSdk::RuleError::NO_DATA_FOUND)
     end
 
-    it "RED (wiring absent): a visitor who never ran exp-a buckets into exp-b normally" do
+    it "a visitor who never ran exp-a buckets into exp-b normally" do
       _, em = build
       visitor = "visitor-never-ran-a"
 
@@ -112,17 +98,19 @@ RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
 
   describe "AC3 — store persistence across two independent DataManager/ExperienceManager " \
            "instances (row 8), via the shipped RedisStore contract" do
-    # A shared persistent store (the shipped RedisStore wrapping a hand-rolled
-    # FakeRedis — spec/support/store_helpers.rb — so the suite still runs with
-    # the `redis` gem uninstalled) backing a SEPARATE DataStoreManager for each
-    # "context". Unlike MemoryStore, this exercises the REAL JSON
-    # serialize/deserialize round-trip the resolver's stored-bucketing read
-    # depends on cross-process.
+    # A single shared persistent store (the shipped RedisStore wrapping a
+    # hand-rolled FakeRedis — spec/support/store_helpers.rb — so the suite
+    # still runs with the `redis` gem uninstalled), wrapped in ONE
+    # DataStoreManager (`shared_dsm`) that is read by two separate
+    # DataManager/ExperienceManager instances. Unlike MemoryStore, this
+    # exercises the REAL JSON serialize/deserialize round-trip the resolver's
+    # stored-bucketing read depends on cross-process, and the shared store is
+    # what makes cross-context persistence observable.
     let(:shared_redis) { ConvertSdk::Stores::RedisStore.new(redis: FakeRedis.new) }
     let(:shared_dsm) { ConvertSdk::DataStoreManager.new(log_manager: log_manager, store: shared_redis) }
 
-    it "COINCIDENTAL PASS TODAY: a decision persisted by context 1 excludes the same visitor " \
-       "from exp-b in a FRESH context 2 reading the same persistent store" do
+    it "a decision persisted by context 1 excludes the same visitor from exp-b in a FRESH " \
+       "context 2 reading the same persistent store" do
       _, em1 = build(data_store_manager: shared_dsm)
       visitor = "visitor-cross-context"
       a_decision = em1.select_variation(visitor, MutualExclusionFixture::EXP_A_KEY, attrs)
@@ -133,9 +121,9 @@ RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
       expect(b_decision).to be(ConvertSdk::RuleError::NO_DATA_FOUND)
     end
 
-    it "RED (wiring absent): a DIFFERENT visitor who never ran exp-a via context 1 still " \
-       "buckets into exp-b normally when read through context 2 (proves independence, not " \
-       "just a coincidental global exclusion)" do
+    it "a DIFFERENT visitor who never ran exp-a via context 1 still buckets into exp-b " \
+       "normally when read through context 2 (proves per-visitor independence, not a global " \
+       "exclusion)" do
       _, em1 = build(data_store_manager: shared_dsm)
       em1.select_variation("visitor-cross-context", MutualExclusionFixture::EXP_A_KEY, attrs)
 
@@ -148,8 +136,7 @@ RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
   end
 
   describe "AC5 — read-only: zero target bucketing, zero store writes, zero track/event " \
-           "enqueue while evaluating the exclusion rule (safety invariant — holds before AND " \
-           "after RB-2 GREEN)" do
+           "enqueue while evaluating the exclusion rule (safety invariant)" do
     it "never invokes either bucketing method and never merges visitor data while " \
        "evaluating (and failing) exp-b's exclusion audience" do
       _, em = build
@@ -200,7 +187,7 @@ RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
       end
       let(:config_hash) { MutualExclusionFixture.config(exp_b_rules: exp_b_rules) }
 
-      it "RED (wiring absent): matches — country=US AND bucketed into exp-a" do
+      it "matches — country=US AND bucketed into exp-a" do
         _, em = build(config_hash)
         visitor = "visitor-ac6-all-match"
         em.select_variation(visitor, MutualExclusionFixture::EXP_A_KEY, attrs)
@@ -211,7 +198,7 @@ RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
         expect(b_decision).to be_a(ConvertSdk::BucketedVariation)
       end
 
-      it "COINCIDENTAL PASS TODAY: fails — country=US but NEVER bucketed into exp-a" do
+      it "fails — country=US but NEVER bucketed into exp-a" do
         _, em = build(config_hash)
         b_decision = em.select_variation(
           "visitor-ac6-all-nomatch", MutualExclusionFixture::EXP_B_KEY,
@@ -232,7 +219,7 @@ RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
       end
       let(:config_hash) { MutualExclusionFixture.config(exp_b_rules: exp_b_rules) }
 
-      it "RED (wiring absent): matches — country=US (generic leaf fails) but bucketed into exp-a" do
+      it "matches — country=US (generic leaf fails) but bucketed into exp-a" do
         _, em = build(config_hash)
         visitor = "visitor-ac6-any-match"
         em.select_variation(visitor, MutualExclusionFixture::EXP_A_KEY, attrs)
@@ -243,7 +230,7 @@ RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
         expect(b_decision).to be_a(ConvertSdk::BucketedVariation)
       end
 
-      it "COINCIDENTAL PASS TODAY: fails — country=US (generic leaf fails) and never bucketed into exp-a" do
+      it "fails — country=US (generic leaf fails) and never bucketed into exp-a" do
         _, em = build(config_hash)
         b_decision = em.select_variation(
           "visitor-ac6-any-nomatch", MutualExclusionFixture::EXP_B_KEY,
@@ -270,9 +257,7 @@ RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
         )
       end
 
-      it "COINCIDENTAL PASS on the bucketing outcome, RED on the warning: excluded, but " \
-         "WITHOUT the AC8 warning naming exp-zz (no resolver means no unresolved-target warn " \
-         "is ever logged today)" do
+      it "excluded, and logs a warning naming exp-zz (unresolved target)" do
         _, em = build(config_hash)
         b_decision = em.select_variation("visitor-ac8-row6", MutualExclusionFixture::EXP_B_KEY, attrs)
 
@@ -292,8 +277,7 @@ RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
         )
       end
 
-      it "RED (wiring absent) on BOTH the bucketing outcome and the warning: buckets " \
-         "normally into exp-b AND logs a warning naming exp-zz" do
+      it "buckets normally into exp-b AND logs a warning naming exp-zz (unresolved target)" do
         _, em = build(config_hash)
         b_decision = em.select_variation("visitor-ac8-row7", MutualExclusionFixture::EXP_B_KEY, attrs)
 

@@ -25,19 +25,22 @@ require "spec_helper"
 #     store writes, no tracking events) is a DataManager/Context-level concern
 #     and out of scope here.
 #
-# Explicitly OUT OF SCOPE for this file / this task (RB-1 is RuleManager-only;
-# a later phase wires the resolver into DataManager/Context):
+# Explicitly OUT OF SCOPE for this file / this task (RuleManager-unit scope
+# only; DataManager/Context wiring — RB-2, merged — is exercised in
+# spec/unit/data_manager_mutual_exclusion_spec.rb):
 #   - AC2 (end-to-end Context#run_experience exclusion across two experiences)
 #   - AC3 (cross-process store persistence — the resolver's OWN correctness,
 #     backed by a real/faked store, is a DataManager-level concern; here we
 #     only prove RuleManager calls whatever resolver it is given and applies
 #     negation/warning per the contract)
-#   - AC9 (RBS/steep signatures for the new `resolver:` keyword) — a later
-#     phase. ZERO lib/ or sig/ changes ship alongside this RED spec file.
+#   - AC9 (RBS/steep signatures for the new `resolver:` keyword) — tracked and
+#     shipped separately (sig/convert_sdk/rule_manager.rbs); not exercised by
+#     this spec file directly.
 #
 # ## Resolver interface contract (DESIGN DECISION — the qs-04 spec is silent on
-# the exact resolver shape; documented here so a later GREEN phase implements
-# EXACTLY this, and so this file's fakes are legible in isolation):
+# the exact resolver shape; documented here so DataManager's resolver (RB-2,
+# merged) implements EXACTLY this, and so this file's fakes are legible in
+# isolation):
 #
 #     resolver = ->(target_experience_key) { true | false | nil }
 #
@@ -74,16 +77,13 @@ require "spec_helper"
 # present but target unknown" case (rows 6/7 above), which DOES apply
 # negation on top of the false `bucketed_raw`.
 #
-# `RuleManager#is_rule_matched` does not accept a `resolver:` keyword yet, so
-# every MUTUAL_EXCLUSION_FIXTURE-driven example below is expected to fail RIGHT NOW with an
-# ArgumentError (unknown/extra keyword) — a real dependency error, not an
-# RSpec DSL mistake. The two "no resolver injected" examples exercise ONLY
-# the pre-existing method signature and may already pass today, since a
-# `bucketed_into_experience_key` leaf run through the CURRENT generic-rule
-# path (no `key` field present in its shape) already falls through to
-# false-with-negation-unapplied by accident of the existing "key not found"
-# branch — GREEN must preserve this exact observable behavior, whichever
-# internal path produces it.
+# `RuleManager#is_rule_matched` accepts the `resolver:` keyword (default
+# `nil`, rule_manager.rb:78), so every MUTUAL_EXCLUSION_FIXTURE-driven example
+# below exercises the resolver-backed match/negation/warning contract
+# end-to-end. The two "no resolver injected" examples below exercise the
+# fail-closed fallback described above: a `bucketed_into_experience_key` leaf
+# falls through to false-with-negation-unapplied when no resolver is threaded
+# at all.
 
 # AC1 — the inline cross-SDK fixture (qs-04 table), byte-identical in intent to
 # the sibling SDKs' specs. `resolver_return` encodes what the injected resolver
