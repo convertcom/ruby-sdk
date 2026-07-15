@@ -86,6 +86,11 @@ module ConvertSdk
       # Deep-stringify the caller's attributes ONCE at the boundary; internals
       # only ever see string keys. nil → empty. The caller's hash is never mutated.
       @attributes = deep_stringify(attributes || {})
+      # qs-03 (RB-5) preview state — nil until {#set_preview} succeeds. A plain
+      # per-instance ivar (never a class/shared variable): two Contexts NEVER
+      # share this (AC7 isolation). Shape: +{experience_id:, variation_id:,
+      # experience:, experience_key:}+.
+      @preview = nil #: Hash[Symbol, untyped]?
     end
 
     # @return [String] the visitor id this context is bound to.
@@ -105,12 +110,25 @@ module ConvertSdk
     # +{segments: props}+ — +context.ts:482+). The merge is atomic per visitor:
     # the read-modify-write runs inside the store manager's merge mutex.
     #
+    # == Zero-trace under preview (qs-03 AC6, RB-6)
+    #
+    # On a preview-active context ONLY the store write below is skipped — the
+    # in-memory +@attributes+ merge always applies (JS parity: JS's public
+    # +updateVisitorProperties+ has no preview guard of its own, but the
+    # PRIVATE helper it calls to persist DOES skip entirely under preview —
+    # +context.ts:626-629+, +if (this._preview) return;+ — leaving the
+    # in-memory side unaffected there too). "Per-context scratch" per the
+    # qs-03 spec: a later decision on THIS context still sees the merge; no
+    # trace of it ever reaches the store.
+    #
     # @param properties [Hash] the properties to merge (symbol or string keys).
     # @return [self]
     def update_visitor_properties(properties)
       normalised = deep_stringify(properties || {})
-      @data_store_manager.merge_visitor_data(account_key, project_key, @visitor_id) do |_current|
-        { "segments" => normalised }
+      if @preview.nil?
+        @data_store_manager.merge_visitor_data(account_key, project_key, @visitor_id) do |_current|
+          { "segments" => normalised }
+        end
       end
       @attributes = @attributes.merge(normalised)
       self
@@ -170,6 +188,79 @@ module ConvertSdk
       nil
     end
 
+    # Force a specific variation of an experience for THIS context — bypassing
+    # audiences, segments, locations, the environment check, experience status,
+    # variation status/traffic filters, stored decisions, and the bucketing
+    # hash for that experience only (qs-03 AC4/AC5). Mirrors JS
+    # +Context#setPreview+ (+context.ts:143-205+); this Ruby surface is
+    # synchronous — the +?exp=+ fallback fetch runs through
+    # {ApiManager#get_config_by_experience}, itself process-wide memoized for
+    # 60s (qs-03 AC8), so no async/await equivalent is needed here.
+    #
+    # == Resolution
+    #
+    # The CURRENT installed config is tried first, by id
+    # ({DataManager#experience_by_id}); when absent, a live
+    # +?exp={experience_id}+ fetch resolves it instead (never touches the
+    # installed config or the store — a previewed experience may be draft/
+    # paused and must never be cached alongside production config). The
+    # resolved experience is held BY REFERENCE, never duped or rebuilt:
+    # DataManager's installed config entities are already deep-frozen (Story
+    # 2.7), so simply holding the reference carries none of the JS SDK-7
+    # in-place-mutation risk (mutating a frozen Ruby Hash raises
+    # +FrozenError+ rather than silently corrupting shared state); a fetched
+    # experience is a brand-new object that is never installed anywhere, so it
+    # is never shared to begin with.
+    #
+    # == Inert on bad input (AC7)
+    #
+    # A blank +experience_id+/+variation_id+, an unresolvable experience
+    # (absent from both the installed config and the +?exp=+ fetch response),
+    # or an unknown +variation_id+ on the resolved experience all leave preview
+    # state UNSET (a +warn+ log, never a raise) — a subsequent
+    # {#run_experience} on this context decides exactly as if this method had
+    # never been called.
+    #
+    # == Isolation (AC7)
+    #
+    # Preview state lives on THIS +Context+ instance only (a plain ivar) — two
+    # +Context+s, even for the same client/config, never share it.
+    #
+    # Never raises into the host: an internal failure degrades to an +error+
+    # log + leaves preview state unset (NFR9).
+    #
+    # @param experience_id [String] the previewed experience's +id+.
+    # @param variation_id [String] the variation +id+ to force.
+    # @return [self]
+    def set_preview(experience_id:, variation_id:)
+      return warn_preview_inert("experience_id/variation_id required") if blank?(experience_id) || blank?(variation_id)
+
+      # Coerce ONCE at this public entry (review round 2) — ids may arrive as
+      # different types (an Integer id read straight off a link param, a
+      # String elsewhere); every downstream reference (resolution, the
+      # decision lookup, the stored @preview hash) threads these coerced
+      # locals instead of the original keyword args, mirroring
+      # {#fetch_preview_experience}'s existing "ids may arrive as different
+      # types" +.to_s+ convention.
+      exp_id = experience_id.to_s
+      var_id = variation_id.to_s
+
+      experience = resolve_preview_experience(exp_id)
+      return warn_preview_inert("no experience found for id=#{exp_id}") if experience.nil?
+
+      decision = @data_manager.get_preview_decision(experience, var_id)
+      return warn_preview_inert("no variation found for id=#{var_id}") if decision.nil?
+
+      @preview = {
+        experience_id: exp_id, variation_id: var_id,
+        experience: experience, experience_key: experience["key"]
+      }
+      self
+    rescue StandardError => e
+      @log_manager.error("Context#set_preview: #{e.class}: #{e.message}")
+      self
+    end
+
     # Decide a single experience for this visitor and return its variation.
     #
     # The optional per-call +attributes+ are deep-stringified and merged OVER the
@@ -197,6 +288,31 @@ module ConvertSdk
     # NO bucketing event is enqueued (a +debug+ line records the suppression). The
     # global Config +tracking: false+ switch ALWAYS wins over a per-call +true+.
     #
+    # == Preview forcing (qs-03 AC4/AC5)
+    #
+    # When {#set_preview} has forced a variation for THIS +key+ on this context,
+    # that forced decision is returned DIRECTLY — bypassing decisioning entirely
+    # (no audience/location/environment/status/traffic/stored-decision/bucketing
+    # walk) and firing NO {SystemEvents::BUCKETING} event (mirrors JS
+    # +context.ts:228-235+). Because this check runs FIRST, it naturally takes
+    # precedence over a stored decision or fresh bucketing for that experience;
+    # every OTHER experience on this same context still decides normally.
+    #
+    # == Zero-trace on OTHER experiences under preview (qs-03 AC6, RB-6)
+    #
+    # When THIS context has a preview active but +key+ is NOT the previewed
+    # experience, decisioning proceeds NORMALLY — only tracking/persistence are
+    # suppressed: {#decision_attributes} threads +enable_storage: false+ so
+    # {DataManager#persist_bucketing} never writes sticky StoreData, and the
+    # per-call tracking verdict is forced +false+ so {#fire_bucketing}'s
+    # {#suppress_bucketing_enqueue?} skips the outbound enqueue. A deliberate
+    # Ruby/JS divergence: JS (+context.ts:260+) ALSO wraps the
+    # {SystemEvents::BUCKETING} lifecycle-event fire in +if (!this._preview)+;
+    # Ruby's {#fire_bucketing} doc (Story 4.5) establishes that event as pure
+    # decisioning observability, orthogonal to the tracking switch — so it
+    # ALWAYS fires here too, preview or not. Zero-trace is defined over track
+    # REQUESTS + STORE writes, not the in-process pub/sub event.
+    #
     # @param key [String] the experience +key+.
     # @param attributes [Hash, nil] optional per-call visitor properties merged
     #   over the context attributes (deep-stringified). May carry +:enable_tracking+.
@@ -205,9 +321,13 @@ module ConvertSdk
       manager = @experience_manager
       return RuleError::NO_DATA_FOUND if manager.nil?
 
+      preview = @preview
+      return forced_preview_variation(preview) if preview && key == preview[:experience_key]
+
       @data_manager.ensure_fresh_config!
       variation = manager.select_variation(@visitor_id, key, decision_attributes(attributes))
-      fire_bucketing(key, variation, track: tracking_enabled_for_call?(attributes)) unless variation.is_a?(Sentinel)
+      track = preview.nil? && tracking_enabled_for_call?(attributes)
+      fire_bucketing(key, variation, track: track) unless variation.is_a?(Sentinel)
       variation
     rescue StandardError => e
       @log_manager.error("Context#run_experience: #{e.class}: #{e.message}")
@@ -230,6 +350,14 @@ module ConvertSdk
     # enqueue for THIS call (decisioning + sticky writes unaffected); the global
     # Config +tracking: false+ switch always wins (Story 4.5).
     #
+    # On a preview-active context (qs-03 AC6, RB-6) every decided variation here
+    # (none of which can be the previewed experience — {#run_experience} is the
+    # ONLY forced-decision path) is zero-trace exactly like {#run_experience}'s
+    # OTHER-experience branch: {#decision_attributes} suppresses the sticky
+    # persist and the per-variation tracking verdict is forced +false+. The
+    # {SystemEvents::BUCKETING} event still fires per variation (see
+    # {#run_experience}'s doc for the Ruby/JS divergence rationale).
+    #
     # @param attributes [Hash, nil] optional per-call visitor properties merged
     #   over the context attributes (deep-stringified). May carry +:enable_tracking+.
     # @return [Array<BucketedVariation>] the frozen variations (misses excluded).
@@ -239,7 +367,7 @@ module ConvertSdk
 
       @data_manager.ensure_fresh_config!
       variations = manager.select_variations(@visitor_id, decision_attributes(attributes))
-      track = tracking_enabled_for_call?(attributes)
+      track = @preview.nil? && tracking_enabled_for_call?(attributes)
       variations.each { |variation| fire_bucketing(variation.experience_key, variation, track: track) }
       variations
     rescue StandardError => e
@@ -328,6 +456,12 @@ module ConvertSdk
     # NO lifecycle event fires on segment attachment (JS parity — neither
     # +setDefaultSegments+ nor +runCustomSegments+ fire +SystemEvents.SEGMENTS+).
     #
+    # == Zero-trace under preview (qs-03 AC6, RB-6)
+    #
+    # +enable_storage: @preview.nil?+ threads through to
+    # {SegmentsManager#put_segments}, suppressing ONLY the persistence write
+    # (mirrors JS SDK-6, +context.ts:571+ — +!this._preview+ passed the same way).
+    #
     # Never raises into the host: a failure degrades to an +error+ log and returns
     # +self+ (NFR9).
     #
@@ -337,7 +471,7 @@ module ConvertSdk
       manager = @segments_manager
       return self if manager.nil?
 
-      manager.put_segments(@visitor_id, deep_stringify(segments || {}))
+      manager.put_segments(@visitor_id, deep_stringify(segments || {}), enable_storage: @preview.nil?)
       self
     rescue StandardError => e
       @log_manager.error("Context#set_default_segments: #{e.class}: #{e.message}")
@@ -355,6 +489,13 @@ module ConvertSdk
     #
     # NO lifecycle event fires on attachment (JS parity, F-014).
     #
+    # == Zero-trace under preview (qs-03 AC6, RB-6)
+    #
+    # +enable_storage: @preview.nil?+ threads through to
+    # {SegmentsManager#select_custom_segments}, suppressing ONLY the persistence
+    # write — rule MATCHING still runs exactly as normal (mirrors JS SDK-6,
+    # +context.ts:610+ — +!this._preview+ passed the same way).
+    #
     # Never raises into the host: a failure degrades to an +error+ log + +nil+ (NFR9).
     #
     # @param segment_keys [Array<String>] the segment keys to evaluate.
@@ -366,7 +507,9 @@ module ConvertSdk
       manager = @segments_manager
       return nil if manager.nil?
 
-      result = manager.select_custom_segments(@visitor_id, segment_keys, visitor_properties(attributes))
+      result = manager.select_custom_segments(
+        @visitor_id, segment_keys, visitor_properties(attributes), enable_storage: @preview.nil?
+      )
       result.is_a?(Sentinel) ? result : nil
     rescue StandardError => e
       @log_manager.error("Context#run_custom_segments: #{e.class}: #{e.message}")
@@ -408,6 +551,14 @@ module ConvertSdk
     # @param force_multiple_transactions [Boolean] bypass the per-goal dedup check.
     # @return [self]
     def track_conversion(goal_key, goal_data: nil, force_multiple_transactions: false)
+      # qs-03 (RB-6) — zero-trace: a preview-active context is a FULL no-op here,
+      # checked BEFORE the global tracking gate below (and BEFORE
+      # DataManager#convert) so NOTHING happens — no enqueue, no CONVERSION
+      # event, and no dedup mark (the mark lives inside #convert's atomic
+      # dedup-and-mark, never reached). Mirrors JS +context.ts:512-519+
+      # (+if (this._preview) return;+ at the top of +trackConversion+).
+      return self if @preview
+
       # Story 4.5 — the global tracking gate sits BEFORE DataManager#convert so a
       # suppressed conversion neither enqueues NOR marks dedup (the goals[goalId]
       # mark lives inside #convert's atomic dedup-and-mark). A subsequent same-goal
@@ -432,6 +583,60 @@ module ConvertSdk
     end
 
     private
+
+    # {#set_preview}'s inert-path helper: warn-log +detail+ under the
+    # +Context#set_preview+ prefix (the single log-message shape every inert
+    # branch shares — AC7) and return +self+ WITHOUT touching +@preview+ (a
+    # prior successful preview, if any, is left exactly as it was).
+    def warn_preview_inert(detail)
+      @log_manager.warn("Context#set_preview: #{detail}")
+      self
+    end
+
+    # {#run_experience}'s preview-forcing branch: force-decide THIS visitor's
+    # previewed variation via {DataManager#get_preview_decision}. +#set_preview+
+    # only ever stores a preview whose (experience, variation_id) pair already
+    # resolved a decision, and the resolved experience is a frozen Hash that can
+    # never drift afterward, so a nil result here is a defensive fallback, not
+    # an expected path.
+    def forced_preview_variation(preview)
+      @data_manager.get_preview_decision(preview[:experience], preview[:variation_id]) || RuleError::NO_DATA_FOUND
+    end
+
+    # Resolve the previewed experience for {#set_preview}: the installed
+    # config's by-id reader first ({DataManager#experience_by_id}); when
+    # absent, the +?exp=+ live-fetch fallback ({#fetch_preview_experience}).
+    def resolve_preview_experience(experience_id)
+      @data_manager.experience_by_id(experience_id) || fetch_preview_experience(experience_id)
+    end
+
+    # The +?exp={experience_id}+ fallback fetch ({ApiManager#get_config_by_experience},
+    # process-wide memoized for 60s — qs-03 AC8) for an experience absent from
+    # the installed config (e.g. a draft/paused preview target). A nil
+    # {ApiManager} (no Client-wired collaborator) or a failed fetch (the port
+    # never raises — it degrades to nil) both resolve to a miss here; the
+    # response's own +experiences+ collection is scanned by id (+to_s+
+    # compared, ids may arrive as different types).
+    def fetch_preview_experience(experience_id)
+      manager = @api_manager
+      return nil if manager.nil?
+
+      config = manager.get_config_by_experience(experience_id)
+      return nil unless config.is_a?(Hash)
+
+      experiences = config["experiences"]
+      return nil unless experiences.is_a?(Array)
+
+      target = experience_id.to_s
+      experiences.find { |candidate| candidate.is_a?(Hash) && candidate["id"].to_s == target }
+    end
+
+    # True for +nil+ or a (post-+#strip+) empty String — the blank-input guard
+    # for {#set_preview}'s +experience_id+/+variation_id+ (mirrors
+    # {Client#create_context}'s blank +visitor_id+ guard).
+    def blank?(value)
+      value.nil? || (value.respond_to?(:strip) && value.strip.empty?)
+    end
 
     # The single conversion seam (mirrors {#fire_bucketing}): enqueue the
     # wire-shaped event THEN fire the lifecycle event with +deferred: true+ (late
@@ -491,12 +696,21 @@ module ConvertSdk
     # it never defaults location matching to the visitor properties) — supplied
     # only when the caller passes +location_properties+/+"location_properties"+.
     # +environment+ is lifted out so the flow's environment-match step sees it.
+    #
+    # +enable_storage: @preview.nil?+ (qs-03 / RB-6 zero-trace) rides along on
+    # EVERY decision built through this ONE seam — {#run_experience},
+    # {#run_experiences}, {#run_feature}, and {#run_features} all call it — so a
+    # preview-active context's ENTIRE decisioning surface (not just experiences)
+    # never persists sticky StoreData ({DataManager#persist_bucketing}'s gate).
+    # Absent preview (the overwhelming default), this is always +true+ —
+    # byte-identical to the pre-qs-03 behavior.
     def decision_attributes(per_call)
       merged = @attributes.merge(deep_stringify(per_call || {}))
       {
         visitor_properties: merged,
         location_properties: merged["location_properties"],
-        environment: merged["environment"]
+        environment: merged["environment"],
+        enable_storage: @preview.nil?
       }
     end
 

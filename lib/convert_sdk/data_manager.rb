@@ -92,23 +92,27 @@ module ConvertSdk
     #   so a Context can supply its own resolution without re-reading config.
     # @param project_resolver [#call, nil] returns the project id for the visitor
     #   store key; defaults to {#project_id}.
+    # @param config_cache_disabled [Boolean] when true, {#cache_config} is a
+    #   no-op — the config-cache WRITE is suppressed. Ruby-SDK-only hardening
+    #   (qs-03, NOT a JS-parity concern): while a +debug_token+ is configured,
+    #   a shared store (e.g. Redis) must never be poisoned with a
+    #   debug-widened config that a production reader could later pick up.
+    #   Sourced by {ConvertSdk.build_data_manager} from +!config.debug_token.nil?+.
+    #   Defaults to +false+ (cache writes enabled) for standalone construction.
     def initialize(log_manager:, data_store_manager: nil, config_key: nil, ttl: nil,
                    clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }, refetch: nil,
                    bucketing_manager: nil, rule_manager: nil,
-                   account_resolver: nil, project_resolver: nil)
+                   account_resolver: nil, project_resolver: nil, config_cache_disabled: false)
       @log_manager = log_manager
       @data_store_manager = data_store_manager
       @config_key = config_key
       @ttl = ttl
+      @config_cache_disabled = config_cache_disabled
       # Timer-off (Lambda/CLI) mode is exactly "no refresh interval configured".
       @timer_off = ttl.nil?
       @clock = clock
       @refetch = refetch
-      # Decision-flow collaborators (Story 2.11). Config-read-only when absent.
-      @bucketing_manager = bucketing_manager
-      @rule_manager = rule_manager
-      @account_resolver = account_resolver || -> { account_id }
-      @project_resolver = project_resolver || -> { project_id }
+      assign_collaborators(bucketing_manager, rule_manager, account_resolver, project_resolver)
       # The deep-frozen config envelope, or nil before the first install. Read
       # lock-free by every reader; replaced atomically under @config_mutex.
       @config = nil #: Hash[String, untyped]?
@@ -291,6 +295,17 @@ module ConvertSdk
       find_by_key(experiences, key)
     end
 
+    # @param id [String] the experience +id+ to find (+to_s+ compared — ids may
+    #   arrive as Integer or String across the wire, e.g. a caller-supplied
+    #   +experience_id+ vs. the config's JSON-parsed +id+). Used by the qs-03
+    #   preview resolution ({Context#set_preview}) to look the previewed
+    #   experience up against the CURRENT installed config before falling back
+    #   to the +?exp=+ live fetch.
+    # @return [Hash, nil] the frozen experience with that id, or nil.
+    def experience_by_id(experience_id)
+      find_by_id(experiences, experience_id)
+    end
+
     # @param key [String] the feature +key+ to find.
     # @return [Hash, nil] the frozen feature with that key, or nil.
     def feature_by_key(key)
@@ -336,6 +351,32 @@ module ConvertSdk
       return RuleError::NO_DATA_FOUND if experience.nil?
 
       retrieve_bucketing(visitor_id, experience, attributes)
+    end
+
+    # ============================ PREVIEW (qs-03) ===========================
+    # Force-decide a specific variation on a caller-supplied experience,
+    # bypassing the ENTIRE decision flow above: audiences, segments, locations,
+    # the environment check, experience status, variation status/traffic
+    # filters, stored decisions, and the bucketing hash. Mirrors JS
+    # data-manager.ts +getPreviewDecision+ (qs-03 / SDK-4).
+    #
+    # PURE by construction: reads ONLY +experience["variations"]+ (via
+    # {#retrieve_variation}) -- never the installed config -- because a preview
+    # experience fetched via +?exp=+ may not be registered there. Has ZERO side
+    # effects: never calls {#persist_bucketing} / +merge_visitor_data+ and never
+    # enqueues anything (this method has no store or transport collaborator to
+    # call in the first place).
+    #
+    # @param experience [Hash] the experience config entity to preview (may be
+    #   absent from the installed config).
+    # @param variation_id [String] the variation id to force (+to_s+ compared).
+    # @return [BucketedVariation, nil] the forced decision, or nil when
+    #   +variation_id+ does not match any variation on +experience+.
+    def get_preview_decision(experience, variation_id)
+      variation = retrieve_variation(experience, variation_id)
+      return nil if variation.nil?
+
+      build_bucketed_variation(experience, variation, nil)
     end
 
     # ========================== CONVERSION TRACKING =========================
@@ -392,6 +433,17 @@ module ConvertSdk
     end
 
     private
+
+    # Assign the decision-flow collaborators (Story 2.11) and their store-key
+    # resolvers — extracted from #initialize to keep it small. Collaborators
+    # are config-read-only when absent; resolvers default to this manager's
+    # own {#account_id} / {#project_id} readers when not injected.
+    def assign_collaborators(bucketing_manager, rule_manager, account_resolver, project_resolver)
+      @bucketing_manager = bucketing_manager
+      @rule_manager = rule_manager
+      @account_resolver = account_resolver || -> { account_id }
+      @project_resolver = project_resolver || -> { project_id }
+    end
 
     # The atomic check-then-mark (Story 4.3 / qs-01). Runs the dedup decision AND
     # the mark inside ONE store-merge block (the merge mutex). Returns true when
@@ -811,7 +863,17 @@ module ConvertSdk
     # (atomic merge via DataStoreManager). Optionally also stores visitor
     # properties as segments (JS updateVisitorProperties path). In-memory store
     # ops only (NFR1; user-supplied Redis trades the no-disk contract).
+    #
+    # +attributes[:enable_storage]+ (qs-03 / RB-6 zero-trace) gates this write:
+    # a preview {Context} threads +enable_storage: false+ through
+    # {Context#decision_attributes} for the ENTIRE call (target AND other
+    # experiences), so a fresh decision made while previewing is never
+    # persisted. Absent (or any non-false value) defaults to +true+ — every
+    # existing non-preview caller (including direct {#get_bucketing} unit
+    # calls with a bare +{}+ attributes hash) is unaffected.
     def persist_bucketing(visitor_id, experience_id, variation_id, attributes)
+      return unless attributes.fetch(:enable_storage, true)
+
       manager = @data_store_manager
       return if manager.nil?
 
@@ -870,9 +932,14 @@ module ConvertSdk
 
     # Write the freshly-installed config through to the store, wrapped with a
     # WALL-CLOCK +fetched_at+ for cross-process staleness. A no-op when no store
-    # or key is wired (standalone unit construction). The DataStoreManager
-    # contains any store failure (logged), so this never crashes an install.
+    # or key is wired (standalone unit construction), or when
+    # +config_cache_disabled+ was set at construction (qs-03 — an active
+    # +debug_token+ suppresses the write so a shared store is never poisoned
+    # with a debug-widened config). The DataStoreManager contains any store
+    # failure (logged), so this never crashes an install.
     def cache_config(frozen)
+      return if @config_cache_disabled
+
       store = @data_store_manager
       key = @config_key
       return if store.nil? || key.nil?
@@ -915,6 +982,14 @@ module ConvertSdk
     # +"key"+ (sparse fixture rows) simply never match. Returns the frozen entity.
     def find_by_key(list, key)
       list.find { |entity| entity.is_a?(Hash) && entity["key"] == key }
+    end
+
+    # Linear scan for the entity whose +"id"+ +to_s+-matches +id+. Mirrors
+    # {#find_by_key}; +to_s+ comparison because ids may arrive as different
+    # types across the wire (JSON Integer vs. a caller-supplied String).
+    def find_by_id(list, entity_id)
+      target = entity_id.to_s
+      list.find { |entity| entity.is_a?(Hash) && entity["id"].to_s == target }
     end
 
     # Build a recursively-frozen copy of +node+. Hashes and arrays are rebuilt

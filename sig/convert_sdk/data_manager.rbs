@@ -16,6 +16,7 @@ module ConvertSdk
     @rule_manager: RuleManager?
     @account_resolver: ^() -> untyped
     @project_resolver: ^() -> untyped
+    @config_cache_disabled: bool
 
     attr_accessor refetch: (^() -> untyped)?
 
@@ -29,7 +30,8 @@ module ConvertSdk
       ?bucketing_manager: BucketingManager?,
       ?rule_manager: RuleManager?,
       ?account_resolver: (^() -> untyped)?,
-      ?project_resolver: (^() -> untyped)?
+      ?project_resolver: (^() -> untyped)?,
+      ?config_cache_disabled: bool
     ) -> void
 
     def install_config: (untyped hash) -> (Symbol | bool)
@@ -62,6 +64,8 @@ module ConvertSdk
 
     def experience_by_key: (String key) -> Hash[String, untyped]?
 
+    def experience_by_id: (String experience_id) -> Hash[String, untyped]?
+
     def feature_by_key: (String key) -> Hash[String, untyped]?
 
     def goal_by_key: (String key) -> Hash[String, untyped]?
@@ -74,6 +78,11 @@ module ConvertSdk
       ?Hash[Symbol, untyped] attributes
     ) -> (BucketedVariation | Sentinel)
 
+    def get_preview_decision: (
+      Hash[String, untyped] experience,
+      String variation_id
+    ) -> BucketedVariation?
+
     def convert: (
       String visitor_id,
       String goal_key,
@@ -82,6 +91,13 @@ module ConvertSdk
     ) -> Hash[String, untyped]?
 
     private
+
+    def assign_collaborators: (
+      BucketingManager? bucketing_manager,
+      RuleManager? rule_manager,
+      (^() -> untyped)? account_resolver,
+      (^() -> untyped)? project_resolver
+    ) -> void
 
     def dedup_and_mark: (String visitor_id, String goal_id, bool force) -> bool
 
@@ -166,6 +182,8 @@ module ConvertSdk
     def collection: (String name) -> Array[untyped]
 
     def find_by_key: (Array[untyped] list, String key) -> Hash[String, untyped]?
+
+    def find_by_id: (Array[untyped] list, untyped entity_id) -> Hash[String, untyped]?
 
     def deep_freeze: (untyped node) -> untyped
   end

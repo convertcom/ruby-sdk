@@ -69,6 +69,8 @@ module ConvertSdk
 
     def config_url: (?force_low_cache: bool) -> String
 
+    def config_url_params: (bool force_low_cache) -> Array[String]
+
     def fetch_headers: () -> Hash[String, String]
 
     def stringify_keys: (untyped node) -> untyped

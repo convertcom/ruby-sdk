@@ -82,6 +82,41 @@ RSpec.describe "ConvertSdk::Client config refresh (Story 2.7)" do
     end
   end
 
+  # qs-03 (RB-1) — AC2: with debug_token set, config caching is disabled: the
+  # SDK always fetches live (never falls back to a stored copy on failure) AND
+  # never writes a fetched config through to the store (so a shared store, e.g.
+  # Redis, cannot poison a production process's cache read with a QA-widened
+  # config). This is the direct sibling of "Task 1 — config cache in the
+  # storage port" above — same store/build_client helpers, debug_token is the
+  # only new variable — so it lives here rather than in client_spec.rb (which
+  # owns the #config_url composition surface, not the cache read/write surface).
+  describe "debug_token (qs-03 RB-1) — always-live config, no store read/write (AC2)" do
+    it "does NOT fall back to a fresh cached entry on init fetch failure when debug_token is set" do
+      store = ConvertSdk::Stores::MemoryStore.new
+      store.set(config_key, { "config" => updated_config, "fetched_at" => Time.now.to_f })
+      stub_vendored_config(sdk_key: "sdk-key-1", status: 500)
+      client = build_client(store: store, sdk_key: "sdk-key-1", debug_token: "tok1")
+      expect(client.config_available?).to be(false)
+    end
+
+    # Regression lock: the pre-existing "logs at info when serving a non-stale
+    # cached entry on init fetch failure" example above (debug_token unset)
+    # already proves the store-fallback path still works without debug_token —
+    # intentionally NOT duplicated here.
+
+    it "does NOT write the freshly-fetched config to the store when debug_token is set" do
+      stub_vendored_config(sdk_key: "sdk-key-1")
+      client = create(sdk_key: "sdk-key-1", debug_token: "tok1")
+      entry = client.instance_variable_get(:@data_store_manager).get(config_key)
+      expect(entry).to be_nil
+    end
+
+    # Regression lock: the pre-existing "writes the fetched config under
+    # convert_sdk.config.{sdkKey} on install" example above (Task 1, AC#1,
+    # debug_token unset) already proves the write-through path still works —
+    # intentionally NOT duplicated here.
+  end
+
   describe "Task 2 — lazily-started refresh timer (AC#2)" do
     it "does NOT start the refresh timer in the factory" do
       stub_vendored_config(sdk_key: "sdk-key-1")

@@ -34,7 +34,12 @@ CONFIG_DEFAULTS_TABLE = {
   read_timeout: 10,
   # qs-02 (RB-1): network cache-level signal — default nil (no-op); config-side
   # validation/reader only here, URL composition is RB-2 (out of scope).
-  cache_level: nil
+  cache_level: nil,
+  # qs-03 (RB-1): QA config-transport token — default nil (no-op); config-side
+  # validation/reader only here, URL composition + always-live caching + secret
+  # registration are exercised in client_spec.rb / client_refresh_spec.rb /
+  # redactor_spec.rb.
+  debug_token: nil
 }.freeze
 
 # Each option => a non-default override value, to prove every option is settable
@@ -58,7 +63,9 @@ CONFIG_OVERRIDE_TABLE = {
   open_timeout: 3,
   read_timeout: 7,
   # qs-02 (RB-1): the only non-default accepted value.
-  cache_level: "low"
+  cache_level: "low",
+  # qs-03 (RB-1): any String is accepted (no allow-list, unlike cache_level).
+  debug_token: "qa-debug-tok-123"
 }.freeze
 
 # qs-02 (RB-1): values cache_level must reject — nil / "low" are the only
@@ -101,7 +108,13 @@ CONFIG_INVALID_TABLE = {
   "non-String config_endpoint" => [{ sdk_key: "k", config_endpoint: 1 }, /config_endpoint.*String/i],
   "non-numeric open_timeout" => [{ sdk_key: "k", open_timeout: "x" }, /open_timeout/i],
   "non-numeric read_timeout" => [{ sdk_key: "k", read_timeout: "x" }, /read_timeout/i],
-  "unknown option key" => [{ sdk_key: "k", bogus_option: true }, /bogus_option|unknown/i]
+  "unknown option key" => [{ sdk_key: "k", bogus_option: true }, /bogus_option|unknown/i],
+  # qs-03 (RB-1) — debug_token is a plain String-or-nil option (no fixed
+  # allow-list like cache_level), so it fits the existing single-regex shape
+  # rather than the CACHE_LEVEL_INVALID_VALUES "names both allowed values"
+  # treatment below.
+  "non-String, non-nil debug_token (Integer)" => [{ sdk_key: "k", debug_token: 123 }, /debug_token.*String/i],
+  "non-String, non-nil debug_token (Array)" => [{ sdk_key: "k", debug_token: ["x"] }, /debug_token.*String/i]
 }.freeze
 
 # sdk_key/sdk_key_secret/data are presence options the minimal valid config has
@@ -175,6 +188,12 @@ RSpec.describe ConvertSdk::Config do
       expect(build.to_internal).to be_frozen
     end
 
+    it "never includes debug_token in the internal wire config (qs-03 RB-1, AC3)" do
+      internal = build(debug_token: "qa-debug-tok-123").to_internal
+      expect(internal.keys).not_to include("debugToken")
+      expect(internal.values).not_to include("qa-debug-tok-123")
+    end
+
     it "carries the canonical flush_interval reader (event_release_interval is retired)" do
       expect(described_class.instance_methods).to include(:flush_interval)
       expect(described_class.instance_methods).not_to include(:event_release_interval)
@@ -203,6 +222,16 @@ RSpec.describe ConvertSdk::Config do
     # same code path as omitting the key.
     it "accepts an explicit nil (same no-op as the default)" do
       expect(build(cache_level: nil).cache_level).to be_nil
+    end
+  end
+
+  describe "debug_token (qs-03 experiment preview, RB-1 — config validation only)" do
+    # Omitted -> nil default, and an accepted String override, are already
+    # exercised by the CONFIG_DEFAULTS_TABLE / CONFIG_OVERRIDE_TABLE sweeps
+    # above (debug_token is a row in both). Only the explicit-nil shape (not
+    # the same code path as omitting the key) gets its own example here.
+    it "accepts an explicit nil (same no-op as the default)" do
+      expect(build(debug_token: nil).debug_token).to be_nil
     end
   end
 
@@ -261,6 +290,18 @@ RSpec.describe ConvertSdk::Config do
     end
 
     it "registers only sdk_key when no secret is given" do
+      described_class.new(sdk_key: "acct/proj", log_manager: log_manager)
+      expect(registered).to eq(["acct/proj"])
+    end
+
+    it "registers debug_token alongside sdk_key/sdk_key_secret when set (qs-03 RB-1, AC3)" do
+      described_class.new(
+        sdk_key: "acct/proj", sdk_key_secret: "shh", debug_token: "qa-debug-tok-123", log_manager: log_manager
+      )
+      expect(registered).to contain_exactly("acct/proj", "shh", "qa-debug-tok-123")
+    end
+
+    it "registers nothing extra for debug_token when it is not set" do
       described_class.new(sdk_key: "acct/proj", log_manager: log_manager)
       expect(registered).to eq(["acct/proj"])
     end

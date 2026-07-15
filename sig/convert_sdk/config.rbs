@@ -24,6 +24,7 @@ module ConvertSdk
     attr_reader open_timeout: (Integer | Float)
     attr_reader read_timeout: (Integer | Float)
     attr_reader cache_level: String?
+    attr_reader debug_token: String?
 
     def initialize: (?log_manager: LogManager?, **untyped options) -> void
 

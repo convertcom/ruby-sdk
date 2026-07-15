@@ -26,12 +26,13 @@ module ConvertSdk
       ?log_manager: LogManager?
     ) -> void
 
-    def put_segments: (String visitor_id, Hash[String, untyped] segments) -> void
+    def put_segments: (String visitor_id, Hash[String, untyped] segments, ?enable_storage: bool) -> void
 
     def select_custom_segments: (
       String visitor_id,
       Array[String] segment_keys,
-      ?Hash[String, untyped]? segment_rule
+      ?Hash[String, untyped]? segment_rule,
+      ?enable_storage: bool
     ) -> (Hash[String, untyped] | Sentinel | nil)
 
     private
@@ -43,7 +44,8 @@ module ConvertSdk
     def set_custom_segments: (
       String visitor_id,
       Array[Hash[String, untyped]] segments,
-      Hash[String, untyped]? segment_rule
+      Hash[String, untyped]? segment_rule,
+      ?enable_storage: bool
     ) -> (Hash[String, untyped] | Sentinel | nil)
 
     def append_segment_id: (
@@ -55,7 +57,8 @@ module ConvertSdk
     def persist_custom_segments: (
       String visitor_id,
       Array[String] existing,
-      Array[String] segment_ids
+      Array[String] segment_ids,
+      ?enable_storage: bool
     ) -> Hash[String, untyped]?
 
     def stored_custom_segments: (String visitor_id) -> Array[String]
