@@ -528,6 +528,35 @@ module ConvertSdk
       bucketing.is_a?(Hash) ? bucketing : {}
     end
 
+    # qs-04 mutual-exclusion resolver builder: a per-call pure
+    # +->(target_experience_key) { true | false | nil }+ closure over
+    # +visitor_id+ ONLY (no global state, no cross-visitor memoization — a
+    # fresh lambda per {#match_rules_by_field} call) matching
+    # {RuleManager#is_rule_matched}'s +resolver:+ contract exactly.
+    #
+    # Resolution (the qs-04 normative algorithm):
+    #   target       = config experience whose key == target_experience_key
+    #   bucketed_raw = target exists AND the visitor's stored bucketing map
+    #                  contains an entry for target["id"].to_s
+    #
+    # Both reads are pure: {#experience_by_key} reads the frozen installed
+    # config; {#stored_bucketing_map} reads the visitor's StoreData via the
+    # store seam. Neither ever triggers bucketing of the target
+    # (BucketingManager is never called here), never writes (no
+    # +merge_visitor_data+), and never tracks — the AC5 read-only invariant.
+    #
+    # @return [Proc] +nil+ from the built lambda means "target key
+    #   unresolvable" — RuleManager itself logs the AC8 warning naming the key
+    #   and applies negation around a +bucketed_raw = false+.
+    def mutual_exclusion_resolver(visitor_id)
+      lambda do |target_experience_key|
+        target = experience_by_key(target_experience_key)
+        next nil if target.nil?
+
+        stored_bucketing_map(visitor_id).key?(target["id"].to_s)
+      end
+    end
+
     # Steps 1-7: resolve the experience and run every eligibility gate up to (but
     # not including) traffic allocation. Returns the matched experience Hash, a
     # {Sentinel} (a propagated {RuleError} from a rule walk), or +nil+ (a plain
@@ -547,7 +576,11 @@ module ConvertSdk
       return reason_miss(experience, "location not match") unless location_outcome
 
       # Step 6 — audiences (permanent skipped when bucketed; transient always).
-      audiences_outcome = match_audiences(experience, attributes[:visitor_properties], is_bucketed)
+      # qs-04: build the mutual-exclusion resolver here (visitor_id is in scope)
+      # and thread it down through match_audiences -> matched_audiences ->
+      # RuleManager#is_rule_matched — the ONLY site that builds it.
+      resolver = mutual_exclusion_resolver(visitor_id)
+      audiences_outcome = match_audiences(experience, attributes[:visitor_properties], is_bucketed, resolver)
       return audiences_outcome if audiences_outcome.is_a?(Sentinel)
 
       # Step 7 — custom segments. Both must pass to reach variation selection.
@@ -735,7 +768,7 @@ module ConvertSdk
     # re-evaluated. +matching_options.audiences == "all"+ requires every checked
     # audience to match; otherwise any match suffices. Returns true/false or a
     # propagated {RuleError} sentinel. Mirrors JS data-manager.ts:350-416.
-    def match_audiences(experience, visitor_properties, is_bucketed)
+    def match_audiences(experience, visitor_properties, is_bucketed, resolver)
       # JS parity (data-manager.ts:356-416): +audiencesMatched+ defaults to FALSE
       # and is only ever set true INSIDE +if (visitorProperties)+. A nil/absent
       # visitor-properties bag therefore GATES the experience (false), even when
@@ -747,7 +780,7 @@ module ConvertSdk
       to_check = audiences_to_check(experience, is_bucketed)
       return true if to_check.empty? # unrestricted (no audiences, or all permanent+bucketed)
 
-      matched = matched_audiences(to_check, visitor_properties)
+      matched = matched_audiences(to_check, visitor_properties, resolver)
       return matched if matched.is_a?(Sentinel)
 
       audiences_verdict?(experience, matched, to_check)
@@ -772,12 +805,17 @@ module ConvertSdk
 
     # Walk each checked audience's rules; collect the matches. A propagated
     # {RuleError} sentinel from any walk short-circuits and is returned as-is.
-    def matched_audiences(to_check, visitor_properties)
+    # qs-04: +resolver+ is threaded unchanged into {RuleManager#is_rule_matched}
+    # — consulted ONLY by a +bucketed_into_experience_key+ leaf; every other
+    # leaf (the 3 generic rule types, AC7) ignores it, byte-identical to before.
+    def matched_audiences(to_check, visitor_properties, resolver)
       matched = [] #: Array[Hash[String, untyped]]
       to_check.each do |audience|
         next unless audience["rules"]
 
-        result = @rule_manager&.is_rule_matched(visitor_properties, audience["rules"], "audience ##{audience["id"]}")
+        result = @rule_manager&.is_rule_matched(
+          visitor_properties, audience["rules"], "audience ##{audience["id"]}", resolver: resolver
+        )
         return result if result.is_a?(Sentinel)
 
         matched << audience if result == true
