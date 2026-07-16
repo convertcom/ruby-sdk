@@ -31,9 +31,11 @@ module ConvertSdk
     # The single-character ellipsis appended after the unmasked prefix (or used
     # as the whole replacement for short secrets).
     MASK_GLYPH = "…"
-    # Matches an +http(s)+ URL's query string: a +?+ and everything up to the
-    # next whitespace. The query is stripped; the path is kept.
-    URL_QUERY_PATTERN = %r{(https?://[^\s?]*)\?\S*}
+    # Matches an +http(s)+ URL up to the next whitespace. +strip_url_queries+
+    # then drops the +?query+ portion in code, keeping the path. A single
+    # trailing quantifier (no quantifier competing after +https?://+) keeps the
+    # match linear — no polynomial backtracking on repeated +http://+ prefixes.
+    URL_PATTERN = %r{https?://\S*}
 
     # @param secrets [Array<String, nil>] secret values to mask. nil/blank
     #   entries are ignored.
@@ -87,7 +89,7 @@ module ConvertSdk
 
     # Drop the query string from any URL in the message, keeping the path.
     def strip_url_queries(message)
-      message.gsub(URL_QUERY_PATTERN, '\1')
+      message.gsub(URL_PATTERN) { |url| url.split("?", 2).first }
     end
   end
 end
