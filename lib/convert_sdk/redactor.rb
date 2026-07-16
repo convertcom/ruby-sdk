@@ -35,7 +35,7 @@ module ConvertSdk
     # then drops the +?query+ portion in code, keeping the path. A single
     # trailing quantifier (no quantifier competing after +https?://+) keeps the
     # match linear — no polynomial backtracking on repeated +http://+ prefixes.
-    URL_PATTERN = %r{https?://\S*}
+    URL_QUERY_PATTERN = %r{https?://\S*}
 
     # @param secrets [Array<String, nil>] secret values to mask. nil/blank
     #   entries are ignored.
@@ -89,7 +89,7 @@ module ConvertSdk
 
     # Drop the query string from any URL in the message, keeping the path.
     def strip_url_queries(message)
-      message.gsub(URL_PATTERN) { |url| url.split("?", 2).first }
+      message.gsub(URL_QUERY_PATTERN) { |url| url.split("?", 2).first }
     end
   end
 end
