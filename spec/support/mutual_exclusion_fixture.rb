@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# Shared qs-04 mutual-exclusion config builder (RB-2 — DataManager wiring).
+# Shared qs-09 mutual-exclusion config builder (RB-2 — DataManager wiring).
 #
-# Spec of record: _bmad-output/planning-artifacts/2026-06-05-convert-ruby-sdk/
-#   qs-04-mutual-exclusion-rule.md — the inline cross-SDK fixture (exp-a id
+# Spec of record: _bmad-output/implementation-artifacts/2026-06-05-convert-ruby-sdk/
+#   qs-09-mutual-exclusion-rule.md — the inline cross-SDK fixture (exp-a id
 #   100111 / var 100901, exp-b id 100222 / var 100902, both a/b_fullstack,
 #   active) + AC2..AC8.
 #
@@ -29,14 +29,26 @@ module MutualExclusionFixture
   # Deliberately ABSENT from every config built here (AC8 — unknown target).
   EXP_ZZ_KEY = "exp-zz"
 
-  ACCOUNT_ID = "qs04-account"
-  PROJECT_ID = "qs04-project"
+  ACCOUNT_ID = "qs09-account"
+  PROJECT_ID = "qs09-project"
 
   AUDIENCE_ID = "900001"
 
+  # A second, INDEPENDENT audience — never combined with the exclusion leaf
+  # inside one rule tree (that's the existing intra-audience AC6 coverage
+  # above); used only by {#config_two_audiences} to attach TWO separate
+  # audiences to exp-b, composed at the EXPERIENCE level via
+  # +settings.matching_options.audiences+ (qs-09 AC6, JS SDK PR #416 model).
+  GENERIC_AUDIENCE_ID = "900002"
+
+  # The generic audience's match target — an attribute the test visitor either
+  # carries (match) or omits (no match).
+  GENERIC_MATCH_KEY = "country"
+  GENERIC_MATCH_VALUE = "US"
+
   module_function
 
-  # A single +bucketed_into_experience_key+ leaf (qs-04 rule shape) — no +key+
+  # A single +bucketed_into_experience_key+ leaf (qs-09 rule shape) — no +key+
   # field, resolved against SDK-stored visitor bucketing state, not attributes.
   def exclusion_leaf(target_key:, negated:)
     { "rule_type" => "bucketed_into_experience_key",
@@ -46,7 +58,7 @@ module MutualExclusionFixture
 
   # A generic attribute leaf (unchanged existing rule shape) — for AC6.
   def generic_leaf(key:, value:, negated: false)
-    { "rule_type" => "generic_key_value",
+    { "rule_type" => "generic_text_key_value",
       "matching" => { "match_type" => "equals", "negated" => negated },
       "key" => key, "value" => value }
   end
@@ -79,14 +91,37 @@ module MutualExclusionFixture
   end
 
   def audience(rules, aud_id: AUDIENCE_ID)
-    { "id" => aud_id, "name" => "qs-04 exclusion audience", "type" => "transient",
-      "status" => "active", "key" => "qs-04-exclusion-audience-#{aud_id}", "rules" => rules }
+    { "id" => aud_id, "name" => "qs-09 exclusion audience", "type" => "transient",
+      "status" => "active", "key" => "qs-09-exclusion-audience-#{aud_id}", "rules" => rules }
   end
 
   # The default exp-b audience: the AC2/AC3/AC4/AC5 baseline scenario — a
   # single negated exclusion rule targeting exp-a under ALL.
   def default_exp_b_rules
     rule_tree([exclusion_leaf(target_key: EXP_A_KEY, negated: true)], mode: :all)
+  end
+
+  # The second audience's rule tree for {#config_two_audiences} — a single
+  # generic leaf matching {GENERIC_MATCH_KEY}/{GENERIC_MATCH_VALUE}. Kept
+  # entirely separate from {#default_exp_b_rules}'s exclusion leaf — the two
+  # are composed as TWO AUDIENCES, never as two leaves in one rule tree.
+  def generic_audience_rules
+    rule_tree([generic_leaf(key: GENERIC_MATCH_KEY, value: GENERIC_MATCH_VALUE)], mode: :all)
+  end
+
+  # Shared skeleton for both config builders below — kills the Sonar
+  # new-code-duplication trap between the single-audience and two-audience
+  # shapes (only the +experiences+/+audiences+ arrays differ).
+  def base_config(experiences:, audiences:)
+    {
+      "account_id" => ACCOUNT_ID,
+      "project" => { "id" => PROJECT_ID },
+      "experiences" => experiences,
+      "audiences" => audiences,
+      "features" => [],
+      "goals" => [],
+      "segments" => []
+    }
   end
 
   # The full flat config: exp-a unconditional, exp-b gated by ONE transient
@@ -99,18 +134,37 @@ module MutualExclusionFixture
   #   audience attached here, so this rarely changes example outcomes, but is
   #   left overridable for completeness).
   def config(exp_b_rules: default_exp_b_rules, matching_options: "all")
-    {
-      "account_id" => ACCOUNT_ID,
-      "project" => { "id" => PROJECT_ID },
-      "experiences" => [
+    base_config(
+      experiences: [
         experience(exp_id: EXP_A_ID, key: EXP_A_KEY, variation_id: EXP_A_VARIATION_ID),
         experience(exp_id: EXP_B_ID, key: EXP_B_KEY, variation_id: EXP_B_VARIATION_ID,
                    audience_ids: [AUDIENCE_ID], matching_options: matching_options)
       ],
-      "audiences" => [audience(exp_b_rules)],
-      "features" => [],
-      "goals" => [],
-      "segments" => []
-    }
+      audiences: [audience(exp_b_rules)]
+    )
+  end
+
+  # exp-a unconditional, exp-b gated by TWO SEPARATE transient audiences — the
+  # default exclusion audience ({#default_exp_b_rules}) plus an independently
+  # matchable generic audience ({#generic_audience_rules}) — composed at the
+  # EXPERIENCE level via +settings.matching_options.audiences+ (ALL/ANY).
+  #
+  # This is the qs-09 AC6 audience-level composition model (JS SDK PR #416):
+  # distinct from {#config}'s single-audience, intra-audience-tree ALL/ANY
+  # coverage above, which combines a generic leaf and the exclusion leaf
+  # INSIDE one audience's rule tree instead of as two attached audiences.
+  #
+  # @param matching_options [String] "all" (every attached audience must
+  #   match) or "any" (any one attached audience matching suffices) —
+  #   {ConvertSdk::DataManager#all_match_required?}.
+  def config_two_audiences(matching_options:)
+    base_config(
+      experiences: [
+        experience(exp_id: EXP_A_ID, key: EXP_A_KEY, variation_id: EXP_A_VARIATION_ID),
+        experience(exp_id: EXP_B_ID, key: EXP_B_KEY, variation_id: EXP_B_VARIATION_ID,
+                   audience_ids: [AUDIENCE_ID, GENERIC_AUDIENCE_ID], matching_options: matching_options)
+      ],
+      audiences: [audience(default_exp_b_rules), audience(generic_audience_rules, aud_id: GENERIC_AUDIENCE_ID)]
+    )
   end
 end

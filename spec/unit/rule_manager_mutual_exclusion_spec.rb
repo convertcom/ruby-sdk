@@ -2,11 +2,11 @@
 
 require "spec_helper"
 
-# qs-04 (RB-1) — RuleManager support for the new +bucketed_into_experience_key+
+# qs-09 (RB-1) — RuleManager support for the new +bucketed_into_experience_key+
 # audience rule (declarative mutual exclusion on fullstack).
 #
-# Spec of record: _bmad-output/planning-artifacts/2026-06-05-convert-ruby-sdk/
-#   qs-04-mutual-exclusion-rule.md
+# Spec of record: _bmad-output/implementation-artifacts/2026-06-05-convert-ruby-sdk/
+#   qs-09-mutual-exclusion-rule.md
 #
 # Acceptance criteria exercised in THIS file (RuleManager-unit scope only):
 #   - AC1 — the 8-row cross-SDK fixture, table-driven from a single constant.
@@ -37,7 +37,7 @@ require "spec_helper"
 #     shipped separately (sig/convert_sdk/rule_manager.rbs); not exercised by
 #     this spec file directly.
 #
-# ## Resolver interface contract (DESIGN DECISION — the qs-04 spec is silent on
+# ## Resolver interface contract (DESIGN DECISION — the qs-09 spec is silent on
 # the exact resolver shape; documented here so DataManager's resolver (RB-2,
 # merged) implements EXACTLY this, and so this file's fakes are legible in
 # isolation):
@@ -45,7 +45,7 @@ require "spec_helper"
 #     resolver = ->(target_experience_key) { true | false | nil }
 #
 #   - `true` / `false` — the target experience key IS present in the served
-#     config; this is `bucketed_raw` per the qs-04 resolution algorithm
+#     config; this is `bucketed_raw` per the qs-09 resolution algorithm
 #     (whether the visitor's stored bucketing map — in-memory merged with the
 #     `store:` — contains an entry for that experience's id).
 #   - `nil`            — the target experience key could NOT be resolved
@@ -85,14 +85,14 @@ require "spec_helper"
 # falls through to false-with-negation-unapplied when no resolver is threaded
 # at all.
 
-# AC1 — the inline cross-SDK fixture (qs-04 table), byte-identical in intent to
+# AC1 — the inline cross-SDK fixture (qs-09 table), byte-identical in intent to
 # the sibling SDKs' specs. `resolver_return` encodes what the injected resolver
 # reports for the row's target key (see the interface contract above):
 # `true`/`false` for a KNOWN target's `bucketed_raw`, `nil` for an UNKNOWN
 # target.
 #
 # Row 8 is modeled EXPLICITLY even though it is IDENTICAL to row 4 at this
-# unit-test level: the qs-04 table's row 8 distinguishes "the decision lives
+# unit-test level: the qs-09 table's row 8 distinguishes "the decision lives
 # only in the persistent store, not in-memory" — a distinction the
 # DataManager-level visitor-state merge resolves BEFORE RuleManager ever sees
 # it. By the time RuleManager calls the injected resolver, the resolver is
@@ -112,7 +112,7 @@ MUTUAL_EXCLUSION_FIXTURE = [
   { row: 6, target: "exp-zz", negated: false, resolver_return: nil, expected: false, warn_key: "exp-zz" },
   { row: 7, target: "exp-zz", negated: true, resolver_return: nil, expected: true, warn_key: "exp-zz" },
   { row: 8, target: "exp-a", negated: true, resolver_return: true, expected: false, warn_key: nil,
-    note: "store-only decision (qs-04 row 8) — identical to row 4 at the RuleManager-unit level; " \
+    note: "store-only decision (qs-09 row 8) — identical to row 4 at the RuleManager-unit level; " \
           "see MUTUAL_EXCLUSION_FIXTURE comment above" }
 ].freeze
 
@@ -128,7 +128,7 @@ RSpec.describe ConvertSdk::RuleManager do
 
   # --- builder helpers (kill duplication of rule literals) ---
 
-  # A single `bucketed_into_experience_key` leaf, per the qs-04 contract shape.
+  # A single `bucketed_into_experience_key` leaf, per the qs-09 contract shape.
   # Deliberately carries NO `key` field — the rule_type is resolved against
   # SDK-stored visitor bucketing state, not a caller-passed attribute.
   def mutual_exclusion_leaf(target_key:, negated:)

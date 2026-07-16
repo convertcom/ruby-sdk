@@ -2,14 +2,14 @@
 
 require "spec_helper"
 
-# qs-04 (RB-2) — DataManager wiring for the +bucketed_into_experience_key+
+# qs-09 (RB-2) — DataManager wiring for the +bucketed_into_experience_key+
 # mutual-exclusion rule: the REAL resolver (built from
 # +DataManager#experience_by_key+ + the visitor's stored bucketing map) is
 # threaded from +match_rules_by_field+ (which has +visitor_id+) down through
 # +match_audiences+ -> +matched_audiences+ -> +RuleManager#is_rule_matched+.
 #
-# Spec of record: _bmad-output/planning-artifacts/2026-06-05-convert-ruby-sdk/
-#   qs-04-mutual-exclusion-rule.md — AC2 (end-to-end exclusion), AC3 (store
+# Spec of record: _bmad-output/implementation-artifacts/2026-06-05-convert-ruby-sdk/
+#   qs-09-mutual-exclusion-rule.md — AC2 (end-to-end exclusion), AC3 (store
 #   persistence, row 8), AC4 (zero new inputs), AC5 (read-only), AC6
 #   (ALL/ANY combination), AC8 (unknown-target warning).
 #
@@ -39,7 +39,7 @@ require "spec_helper"
 # AC5's read-only assertions are a SAFETY INVARIANT: the resolver never
 # buckets the target experience, never writes to the store, and never fires a
 # track/event enqueue while evaluating the exclusion rule.
-RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
+RSpec.describe "qs-09 mutual exclusion — DataManager wiring (RB-2)" do
   let(:sink) { CapturingSink.new }
   let(:log_manager) { ConvertSdk::LogManager.new(level: ConvertSdk::LogLevel::TRACE, sink: sink) }
   let(:config) { ConvertSdk::Config.new(log_manager: log_manager, data: MutualExclusionFixture.config) }
@@ -100,7 +100,7 @@ RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
            "(exp-b itself) must not falsely satisfy an exclusion rule targeting exp-a" do
     it "buckets normally into exp-b even once the visitor's stored bucketing map already holds " \
        "an entry for exp-b (not exp-a) — proves the resolver checks exp-a's id specifically, " \
-       "not \"map non-empty\" (qs-04 row 5: {\"100222\":\"100902\"}, target exp-a, negated true, " \
+       "not \"map non-empty\" (qs-09 row 5: {\"100222\":\"100902\"}, target exp-a, negated true, " \
        "expected matched TRUE)" do
       _, em = build
       visitor = "visitor-row5-fidelity"
@@ -262,6 +262,74 @@ RSpec.describe "qs-04 mutual exclusion — DataManager wiring (RB-2)" do
         )
         expect(b_decision).to be(ConvertSdk::RuleError::NO_DATA_FOUND)
       end
+    end
+  end
+
+  # qs-09 AC6 audience-level composition (JS SDK PR #416 model): the exclusion
+  # audience and a generic audience are TWO SEPARATE audiences attached to
+  # exp-b, composed via the EXPERIENCE-level `settings.matching_options.audiences`
+  # (ALL/ANY) — `DataManager#audiences_verdict?` (data_manager.rb:827). This is
+  # additive coverage of a gap in the existing "AC6 — combination semantics"
+  # describe block above, which tests intra-audience-tree ALL/ANY (one audience,
+  # two leaves) and does NOT exercise `audiences_verdict?`/multi-audience
+  # combination. The existing describe block is untouched.
+  describe "AC6 — two-audience composition via `settings.matching_options.audiences` " \
+           "(ALL/ANY), the exclusion audience and a generic audience attached as TWO " \
+           "SEPARATE audiences (qs-09 audience-level model, JS SDK PR #416)" do
+    it "matching_options: \"all\" — a matching generic audience does NOT OR away a failed " \
+       "exclusion audience: a visitor already bucketed into exp-a stays EXCLUDED from exp-b" do
+      config_hash = MutualExclusionFixture.config_two_audiences(matching_options: "all")
+      _, em = build(config_hash)
+      visitor = "visitor-ac6-two-aud-all-excluded"
+      em.select_variation(visitor, MutualExclusionFixture::EXP_A_KEY, attrs)
+
+      b_decision = em.select_variation(
+        visitor, MutualExclusionFixture::EXP_B_KEY,
+        attrs(visitor_properties: {
+                MutualExclusionFixture::GENERIC_MATCH_KEY => MutualExclusionFixture::GENERIC_MATCH_VALUE
+              })
+      )
+      expect(b_decision).to be(ConvertSdk::RuleError::NO_DATA_FOUND)
+    end
+
+    # qs-09 Compatibility section (verbatim): "Under ANY with another matching
+    # audience it runs without exclusion." That sentence documents old SDKs
+    # failing closed on the unknown rule type; the SAME logical property holds
+    # here on the CURRENT SDK's own audience-level ANY combination
+    # (`audiences_verdict?`'s `!matched.empty?` branch — data_manager.rb:831),
+    # NOT an old-SDK/unknown-rule-type scenario.
+    it "matching_options: \"any\" degrades the exclusion — a matching generic audience alone " \
+       "is enough for exp-b to run even though the visitor is already bucketed into exp-a" do
+      config_hash = MutualExclusionFixture.config_two_audiences(matching_options: "any")
+      _, em = build(config_hash)
+      visitor = "visitor-ac6-two-aud-any-runs"
+      em.select_variation(visitor, MutualExclusionFixture::EXP_A_KEY, attrs)
+
+      b_decision = em.select_variation(
+        visitor, MutualExclusionFixture::EXP_B_KEY,
+        attrs(visitor_properties: {
+                MutualExclusionFixture::GENERIC_MATCH_KEY => MutualExclusionFixture::GENERIC_MATCH_VALUE
+              })
+      )
+      expect(b_decision).to be_a(ConvertSdk::BucketedVariation)
+      expect(b_decision.id).to eq(MutualExclusionFixture::EXP_B_VARIATION_ID)
+    end
+
+    it "matching_options: \"all\" baseline — a visitor who never ran exp-a and whose " \
+       "attributes match the generic audience satisfies BOTH audiences and buckets into " \
+       "exp-b normally" do
+      config_hash = MutualExclusionFixture.config_two_audiences(matching_options: "all")
+      _, em = build(config_hash)
+      visitor = "visitor-ac6-two-aud-all-baseline"
+
+      b_decision = em.select_variation(
+        visitor, MutualExclusionFixture::EXP_B_KEY,
+        attrs(visitor_properties: {
+                MutualExclusionFixture::GENERIC_MATCH_KEY => MutualExclusionFixture::GENERIC_MATCH_VALUE
+              })
+      )
+      expect(b_decision).to be_a(ConvertSdk::BucketedVariation)
+      expect(b_decision.id).to eq(MutualExclusionFixture::EXP_B_VARIATION_ID)
     end
   end
 
