@@ -33,7 +33,7 @@ module ConvertSdk
     MASK_GLYPH = "…"
     # Matches an +http(s)+ URL's query string: a +?+ and everything up to the
     # next whitespace. The query is stripped; the path is kept.
-    URL_QUERY_PATTERN = %r{(https?://\S*?)\?\S*}
+    URL_QUERY_PATTERN = %r{(https?://[^\s?]*)\?\S*}
 
     # @param secrets [Array<String, nil>] secret values to mask. nil/blank
     #   entries are ignored.
