@@ -39,8 +39,8 @@ documents.
 | File | What it teaches |
 |------|-----------------|
 | `Gemfile` | Uses the SDK by `path: "../.."` — exercises the **real gemspec** (packaging mistakes surface here, not at publish). |
-| `config/initializers/convert_sdk.rb` | **The recipe:** build ONE `CONVERT_SDK` client at boot; the OFFLINE/LIVE selector lives here. |
-| `app/controllers/concerns/convert_context.rb` | **The recipe:** one `Context` per request, from the visitor id. |
+| `config/initializers/convert_sdk.rb` | **The recipe:** build ONE `CONVERT_SDK` client at boot; the OFFLINE/LIVE selector lives here; also wires `debug_token:` when `CONVERT_DEBUG_TOKEN` is set. |
+| `app/controllers/concerns/convert_context.rb` | **The recipe:** one `Context` per request, from the visitor id; also parses `?convert_preview=` and calls `Context#set_preview` (see [Preview Links & QA](#preview-links--qa)). |
 | `app/controllers/demo_controller.rb` | The full loop: `run_experience` → `run_feature` → `run_custom_segments` → `track_conversion` → `flush`, rendered as HTML or JSON. |
 | `app/views/demo/run.html.erb` | Bare semantic HTML (no CSS/JS/asset pipeline) — the DOM IS the verification surface. |
 | `config/convert_demo_config.json` | The committed OFFLINE config fixture (direct-data mode). |
@@ -111,6 +111,7 @@ JSON shape via `Accept: application/json` carries the identical data):
 | What | Rendered value (DOM id) | Notes |
 |------|-------------------------|-------|
 | Mode | `offline` (`#mode`) | direct-data, no network |
+| Preview state | `INACTIVE` (`#preview-active`) | `ACTIVE` + forced ids render only when `?convert_preview=` is present — see [Preview Links & QA](#preview-links--qa) |
 | Experience decision | `DECIDED` (`#experience-decided`) | `run_experience("test-experience-ab-fullstack-2")` |
 | Experience id | `100218245` (`#experience-id`) | |
 | Variation id | `100299457` (`#variation-id`) | |
@@ -185,6 +186,71 @@ LIVE entity-key defaults match the php-sdk demo's verified entities
 `button-primary-click`). LIVE makes a config **GET** (the SDK config endpoint) and
 a track **POST** with the wire shape
 `{accountId, projectId, enrichData, source, visitors:[{visitorId, events:[bucketing, conversion…]}]}`.
+
+## Preview Links & QA
+
+The demo wires up the SDK's two QA/preview capabilities (qs-08) so a stakeholder
+or tester can exercise them without touching code.
+
+### Preview links (`?convert_preview=`)
+
+A preview link renders **one specific variation server-side** — bypassing
+bucketing, audiences, segments, locations, the environment check, and
+experience/variation status — with **zero tracking events** and **zero
+visitor-state persistence** for that request (`Context#set_preview`'s zero-trace
+guarantee).
+
+Append `?convert_preview={experienceId}.{variationId}` (dot-separated numeric
+ids) to `/demo`. A concrete example that works with **zero setup**, against the
+committed OFFLINE fixture's `test-experience-ab-fullstack-2` experience
+(id `100218245`, variations `100299456`/`100299457`) — the per-URL table above
+already documents that `visitor_id=visitor-1` deterministically buckets into
+variation `100299457`:
+
+```bash
+curl "http://localhost:3000/demo?visitor_id=visitor-1&convert_preview=100218245.100299456"
+```
+
+The experience section now shows variation id **`100299456`** — the FORCED
+variation — instead of the normal `100299457`, proving the preview link
+overrides deterministic bucketing. The visitor's attributes (`varName1`,
+`country`, `site_area`, …) are irrelevant under preview — audiences, status, and
+bucketing are all bypassed for the previewed experience.
+
+In OFFLINE (direct-data) mode, preview only works for an experience already
+present in the loaded fixture. To preview a **draft or paused** experience that
+is NOT in the config, run in LIVE mode instead — preview auto-fetches the target
+experience via the serving `?exp=` param when it's missing from the config (no
+token required for this fetch); `CONVERT_DEBUG_TOKEN` (below) additionally widens
+config visibility to draft/paused statuses generally.
+
+A malformed or missing param degrades to normal, un-forced bucketing (no crash):
+
+```bash
+curl "http://localhost:3000/demo?visitor_id=visitor-1&convert_preview=garbage"
+# => preview inactive; variation-id is the normal 100299457
+```
+
+To confirm zero-trace behavior:
+- Watch the app logs for `[ConvertSDK] Preview active — experience_id=… variation_id=… (zero-trace context)` when a preview request comes in.
+- The `preview` block in the JSON response (`Accept: application/json`) carries the identical `active`/`experience_id`/`variation_id` data as the DOM ids.
+
+### `CONVERT_DEBUG_TOKEN` — QA config access
+
+Set `CONVERT_DEBUG_TOKEN` in `.env` (LIVE mode only — it only affects the config
+**fetch**, so it's a no-op in OFFLINE direct-data mode) to have every config
+fetch pull the full, fresh config — including draft and paused experiences —
+with the SDK's config cache disabled for as long as the token is set (every
+fetch goes live to origin, and a failed fetch does NOT fall back to a stale
+cached copy). The token has a 24-hour TTL on the backend, is redacted from all
+SDK logs, and is never sent to the tracking endpoint. Composes with LIVE mode:
+
+```env
+CONVERT_DEBUG_TOKEN=your-qa-debug-token
+```
+
+Generate a token from the Convert app for the project configured via
+`CONVERT_SDK_KEY`. Leave it unset for normal (production-like) demo behavior.
 
 ## The fork-safety smoke (release-blocking — NFR11)
 

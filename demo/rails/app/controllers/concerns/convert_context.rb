@@ -19,15 +19,74 @@
 # each tracked event to the worker PID that produced it.
 #
 # NOTE: ZERO fork-handling code here either — see config/initializers/convert_sdk.rb.
+#
+# ── qs-08 preview links (`?convert_preview={experienceId}.{variationId}`) ────
+# The demo's second documented recipe: parse the canonical preview link param
+# off THIS request and, when present, force the context's `run_experience` for
+# that one experience to the given variation — bypassing bucketing/audiences/
+# status/environment/stored-decisions and suppressing ALL tracking + visitor-
+# state persistence for the rest of this context's lifetime (SDK-level
+# zero-trace guarantee, `Context#set_preview`). Inert (no-op) on a missing or
+# malformed param — `ConvertSdk.parse_preview_param` returns `nil` and we simply
+# skip `set_preview`.
 module ConvertContext
   extend ActiveSupport::Concern
 
   private
 
   # The per-request Convert context, memoized for the duration of the request.
+  # Preview resolution (if any) happens exactly once, at build time, so every
+  # later `convert_context` call in the request sees the same forced state.
   # @return [ConvertSdk::Context]
   def convert_context
-    @convert_context ||= CONVERT_SDK.create_context(convert_visitor_id, convert_visitor_attributes)
+    @convert_context ||= begin
+      context = CONVERT_SDK.create_context(convert_visitor_id, convert_visitor_attributes)
+      @convert_preview_pair = context ? apply_convert_preview(context) : nil
+      context
+    end
+  end
+
+  # Whether `?convert_preview=` resolved to a forced variation on THIS request's
+  # context. `@convert_preview_pair` is only ever nil (inactive) or a 2-element
+  # array (active) — never boolean false — so a plain `defined?`-free nil check
+  # is safe here (no `||=`-on-false footgun).
+  # @return [Boolean]
+  def convert_preview_active?
+    convert_context # ensure preview resolution has run
+    !@convert_preview_pair.nil?
+  end
+
+  # The forced experience id for this request, or nil when preview is inactive.
+  # @return [String, nil]
+  def convert_preview_experience_id
+    convert_context
+    @convert_preview_pair&.first
+  end
+
+  # The forced variation id for this request, or nil when preview is inactive.
+  # @return [String, nil]
+  def convert_preview_variation_id
+    convert_context
+    @convert_preview_pair&.last
+  end
+
+  # Parse `params[:convert_preview]` and, when it is a valid
+  # `"{experienceId}.{variationId}"` pair, force it on +context+ via
+  # `Context#set_preview` and log the same observable line the php-sdk demo
+  # emits (the "watch the logs" verification step in the README).
+  # @param context [ConvertSdk::Context]
+  # @return [Array(String, String), nil] the parsed pair, or nil when inactive
+  def apply_convert_preview(context)
+    pair = ConvertSdk.parse_preview_param(params[:convert_preview])
+    return nil if pair.nil?
+
+    experience_id, variation_id = pair
+    context.set_preview(experience_id: experience_id, variation_id: variation_id)
+    Rails.logger.info(
+      "[ConvertSDK] Preview active — experience_id=#{experience_id} " \
+      "variation_id=#{variation_id} (zero-trace context)"
+    )
+    pair
   end
 
   # The demo's visitor identity: explicit param/header, else a per-request

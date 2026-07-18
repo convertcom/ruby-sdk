@@ -116,6 +116,17 @@ else
   convert_options[:data_refresh_interval] = nil if ENV["CONVERT_DEMO_TIMERS_OFF"] == "1"
   convert_options[:flush_interval]        = nil if ENV["CONVERT_DEMO_TIMERS_OFF"] == "1"
 
+  # qs-08 QA config access: only wire `debug_token` when a non-empty value is
+  # configured (mirroring the php-sdk demo's ConvertServiceProvider guard) — a
+  # blank string would still count as "set" to Config and needlessly force
+  # always-live config fetches / disable the config cache. `debug_token` only
+  # affects the config FETCH (it appends `debug_token=`/`_conv_low_cache=1` to
+  # the config URL and skips store-fallback on a failed fetch — see
+  # ConvertSdk::Config#debug_token); it is a no-op in OFFLINE direct-data mode
+  # above, since `data:` mode never fetches a config at all.
+  debug_token = ENV["CONVERT_DEBUG_TOKEN"].to_s.strip
+  convert_options[:debug_token] = debug_token unless debug_token.empty?
+
   # THE singleton. Built once in the preloading master; inherited by every worker.
   CONVERT_SDK = ConvertSdk.create(**convert_options.compact, **convert_log_opts)
 end
