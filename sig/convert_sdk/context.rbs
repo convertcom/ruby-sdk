@@ -62,7 +62,7 @@ module ConvertSdk
 
     private
 
-    def warn_preview_inert: (String detail) -> self
+    def warn_preview_inert: (String detail, ?clear: bool) -> self
 
     def forced_preview_variation: (Hash[Symbol, untyped] preview) -> (BucketedVariation | Sentinel)
 

@@ -354,6 +354,35 @@ RSpec.describe ConvertSdk::BucketingManager do
     it "returns nil for an empty variation list" do
       expect(manager.select_bucket_anchored([], 0)).to be_nil
     end
+
+    # Cross-SDK parity: total_weight MUST be a NAIVE left-to-right fold (JS
+    # bucketing-manager.ts:153-156, `allocations.reduce((sum, {allocation}) =>
+    # sum + allocation, 0)`), never Ruby's Array#sum (a Kahan-Babuska
+    # compensated algorithm for Float arrays). This 3-way ~thirds split is a
+    # VERIFIED divergence (not invented): [33.34, 33.330000000000005, 33.33].sum
+    # == 100.0 while the same array folded naively == 100.00000000000001 (1
+    # ULP apart) -- and that 1-ULP total_weight difference flips the walk's
+    # outcome at value=6667 from "V1" (compensated) to not-bucketed (naive,
+    # matching JS). Neighboring values 6666/6668 are UNCHANGED, isolating the
+    # divergence to the exact anchor boundary.
+    describe "JS parity — total_weight is a naive fold, not a compensated sum" do
+      let(:thirds_split) do
+        [
+          variation("O", 33.34, status: "running"),
+          variation("V1", 33.330000000000005, status: "running"),
+          variation("V2", 33.33, status: "running")
+        ]
+      end
+
+      it "matches JS's naive-fold total_weight at the exact boundary value (not-bucketed, not V1)" do
+        expect(manager.select_bucket_anchored(thirds_split, 6_667)).to be_nil
+      end
+
+      it "leaves the neighboring values unaffected (the divergence is boundary-exact)" do
+        expect(manager.select_bucket_anchored(thirds_split, 6_666)).to eq("V1")
+        expect(manager.select_bucket_anchored(thirds_split, 6_668)).to eq("V2")
+      end
+    end
   end
 
   # #bucket_for_visitor_anchored composes #value_visitor_based +

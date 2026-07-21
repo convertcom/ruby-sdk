@@ -246,10 +246,10 @@ module ConvertSdk
       var_id = variation_id.to_s
 
       experience = resolve_preview_experience(exp_id)
-      return warn_preview_inert("no experience found for id=#{exp_id}") if experience.nil?
+      return warn_preview_inert("no experience found for id=#{exp_id}", clear: true) if experience.nil?
 
       decision = @data_manager.get_preview_decision(experience, var_id)
-      return warn_preview_inert("no variation found for id=#{var_id}") if decision.nil?
+      return warn_preview_inert("no variation found for id=#{var_id}", clear: true) if decision.nil?
 
       @preview = {
         experience_id: exp_id, variation_id: var_id,
@@ -305,13 +305,11 @@ module ConvertSdk
     # suppressed: {#decision_attributes} threads +enable_storage: false+ so
     # {DataManager#persist_bucketing} never writes sticky StoreData, and the
     # per-call tracking verdict is forced +false+ so {#fire_bucketing}'s
-    # {#suppress_bucketing_enqueue?} skips the outbound enqueue. A deliberate
-    # Ruby/JS divergence: JS (+context.ts:260+) ALSO wraps the
-    # {SystemEvents::BUCKETING} lifecycle-event fire in +if (!this._preview)+;
-    # Ruby's {#fire_bucketing} doc (Story 4.5) establishes that event as pure
-    # decisioning observability, orthogonal to the tracking switch — so it
-    # ALWAYS fires here too, preview or not. Zero-trace is defined over track
-    # REQUESTS + STORE writes, not the in-process pub/sub event.
+    # {#suppress_bucketing_enqueue?} skips the outbound enqueue.
+    # {#fire_bucketing} ALSO suppresses the in-process {SystemEvents::BUCKETING}
+    # lifecycle-event fire while a preview is active on this context (JS parity
+    # — +context.ts:260+: +if (!this._preview) { fire BUCKETING }+). No event
+    # fires for any experience on a preview-active context.
     #
     # @param key [String] the experience +key+.
     # @param attributes [Hash, nil] optional per-call visitor properties merged
@@ -594,9 +592,21 @@ module ConvertSdk
 
     # {#set_preview}'s inert-path helper: warn-log +detail+ under the
     # +Context#set_preview+ prefix (the single log-message shape every inert
-    # branch shares — AC7) and return +self+ WITHOUT touching +@preview+ (a
-    # prior successful preview, if any, is left exactly as it was).
-    def warn_preview_inert(detail)
+    # branch shares — AC7) and return +self+.
+    #
+    # +clear:+ mirrors JS +Context#setPreview+ (+context.ts:143-205+) exactly:
+    # the BLANK-input guard (this method's caller with +clear: false+, the
+    # default) leaves a prior successful +@preview+ untouched — JS's own
+    # +if (!experienceId || !variationId)+ branch returns without touching
+    # +this._preview+ (+context.ts:146-152+). Every OTHER failure path — an
+    # unresolvable experience (+context.ts:172,182+) or an unknown variation id
+    # on the resolved experience (+context.ts:195+) — explicitly nulls the
+    # preview (JS: +this._preview = null;+ before each of those returns), so a
+    # FAILED re-preview after a prior success falls back to normal decisioning
+    # rather than stranding the stale forced pick. Callers pass +clear: true+
+    # for those two paths only.
+    def warn_preview_inert(detail, clear: false)
+      @preview = nil if clear
       @log_manager.warn("Context#set_preview: #{detail}")
       self
     end
@@ -750,20 +760,26 @@ module ConvertSdk
     #    wire entry omits the +segments+ key entirely.
     #
     # The SOLE bucketing enqueue site. The {SystemEvents::BUCKETING} LIFECYCLE event
-    # ALWAYS fires (it is decisioning observability, not tracking — a host listener
-    # may need to react to the decision even under consent denial); only the
-    # outbound ENQUEUE is gated by the tracking switch (Story 4.5). +track+ is the
+    # fires for every fresh/decided variation on a NON-preview context (decisioning
+    # observability, not tracking — a host listener may need to react to the
+    # decision even under consent denial); a preview-active context (qs-03,
+    # +@preview+ set) fires NO {SystemEvents::BUCKETING} event for ANY
+    # experience on this context, matching JS +context.ts:260+
+    # (+if (!this._preview) { fire BUCKETING }+). Independently, the outbound
+    # ENQUEUE is gated by the tracking switch (Story 4.5). +track+ is the
     # composed verdict ({#tracking_enabled_for_call?} — global AND per-call); when +false+
     # the wire enqueue is suppressed with a +debug+ line and stickiness/decisioning
     # are untouched. Contained — a raising listener never crosses back (EventManager
     # swallows it); the enqueue is pure in-memory and inert when no ApiManager is wired.
     def fire_bucketing(experience_key, variation, track: true)
-      @event_manager.fire(
-        SystemEvents::BUCKETING,
-        { visitor_id: @visitor_id, experience_key: experience_key, variation_key: variation.key },
-        nil,
-        deferred: true
-      )
+      if @preview.nil?
+        @event_manager.fire(
+          SystemEvents::BUCKETING,
+          { visitor_id: @visitor_id, experience_key: experience_key, variation_key: variation.key },
+          nil,
+          deferred: true
+        )
+      end
       return if suppress_bucketing_enqueue?(track)
 
       enqueue_bucketing_event(variation)

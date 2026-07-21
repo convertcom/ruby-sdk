@@ -67,14 +67,12 @@ require "spec_helper"
 #     suppressed under preview — either an early Context-level guard, or (JS
 #     parity) an `enable_storage:` flag threaded into SegmentsManager#put_segments
 #     / #select_custom_segments. Left open for GREEN to decide.
-#   - NOT tested here (surfaced, not enforced): the JS oracle (SDK-5) ALSO wraps
-#     the SystemEvents::BUCKETING lifecycle-event fire for OTHER experiences in
-#     `if (!this._preview)`. The existing Ruby architecture (context.rb's
-#     #fire_bucketing doc, Story 4.5) states the BUCKETING lifecycle event
-#     ALWAYS fires regardless of the tracking gate ("decisioning observability,
-#     not tracking"). This file does NOT assert either way for OTHER
-#     experiences under preview — a real JS/Ruby divergence candidate to
-#     surface to the user during GREEN, not to silently resolve here.
+#   - RESOLVED (JS parity fix, post-GREEN): the JS oracle (SDK-5) wraps the
+#     SystemEvents::BUCKETING lifecycle-event fire for OTHER experiences in
+#     `if (!this._preview)` (context.ts:260). #fire_bucketing (context.rb) now
+#     mirrors this exactly: NO BUCKETING event fires for ANY experience on a
+#     preview-active context (previously a deliberate, now-reversed Ruby/JS
+#     divergence). Asserted below.
 module ZeroTraceVector
   TARGET_EXP_KEY = "test-experience-ab-fullstack-2"
   TARGET_EXP_ID = "100218245"
@@ -227,6 +225,17 @@ RSpec.describe "Context zero-trace suppression on a preview-active Context (RB-6
       expect(client.api_manager.queue.size).to eq(0) # bucketing enqueue suppressed
       expect(stored_data_for(client, "visitor-1")).to be_nil # sticky persist suppressed
     end
+
+    it "fires NO BUCKETING lifecycle event (JS parity, context.ts:260)" do
+      client = build_client
+      fired = []
+      client.on(ConvertSdk::SystemEvents::BUCKETING) { |payload, _err| fired << payload }
+      ctx = preview_context(client, "visitor-1")
+
+      ctx.run_experience(other_exp_key)
+
+      expect(fired).to be_empty
+    end
   end
 
   describe "run_experiences on a preview context (plural decisioning surface)" do
@@ -241,6 +250,17 @@ RSpec.describe "Context zero-trace suppression on a preview-active Context (RB-6
       expect(other.id).to eq(other_variation_id)
       expect(client.api_manager.queue.size).to eq(0) # bucketing enqueue suppressed for every decided variation
       expect(stored_data_for(client, "visitor-1")).to be_nil # sticky persist suppressed for every decided variation
+    end
+
+    it "fires NO BUCKETING lifecycle event for any decided experience (JS parity, context.ts:260)" do
+      client = build_client
+      fired = []
+      client.on(ConvertSdk::SystemEvents::BUCKETING) { |payload, _err| fired << payload }
+      ctx = preview_context(client, "visitor-1")
+
+      ctx.run_experiences
+
+      expect(fired).to be_empty
     end
 
     it "forces the previewed TARGET (parity with #run_experience), replacing its natural bucket exactly once" do

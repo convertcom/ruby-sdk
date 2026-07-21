@@ -339,6 +339,53 @@ RSpec.describe "Context#set_preview (RB-5 / qs-03 AC4, AC5, AC7)" do
     end
   end
 
+  # JS parity fix: JS Context#setPreview (context.ts:143-205) nulls `_preview`
+  # on the "experience not found" and "variation not found" failure paths
+  # (context.ts:172, 182, 195: `this._preview = null;` before each return),
+  # but NOT on the blank-input guard (context.ts:146-152 returns without
+  # touching `_preview`). Ruby's #set_preview now mirrors this exactly via
+  # `warn_preview_inert(detail, clear: true)` on the two resolution-failure
+  # paths only.
+  describe "a FAILED re-preview after a prior success (JS parity, context.ts:172/182/195)" do
+    it "clears the preview when the second call's experience id is unresolvable" do
+      stub_config_by_experience(experiences: [])
+      ctx = build_context(attributes: matching_attrs)
+      ctx.set_preview(experience_id: exp_id, variation_id: forced_variation_id)
+      expect(ctx.run_experience(exp_key).id).to eq(forced_variation_id) # sanity: preview active
+
+      ctx.set_preview(experience_id: "no-such-experience-id", variation_id: "no-such-variation-id")
+
+      # The stale forced pick is gone -- this SAME experience now decides
+      # NORMALLY (real bucketing), not the previously-forced variation.
+      result = ctx.run_experience(exp_key)
+      expect(variation_ids).to include(result.id)
+      expect(warn_messages).to include("Context#set_preview")
+    end
+
+    it "clears the preview when the second call's variation id is unresolvable on the resolved experience" do
+      ctx = build_context(attributes: matching_attrs)
+      ctx.set_preview(experience_id: exp_id, variation_id: forced_variation_id)
+      expect(ctx.run_experience(exp_key).id).to eq(forced_variation_id) # sanity: preview active
+
+      ctx.set_preview(experience_id: exp_id, variation_id: "does-not-exist")
+
+      result = ctx.run_experience(exp_key)
+      expect(variation_ids).to include(result.id)
+    end
+
+    it "leaves a prior successful preview UNTOUCHED when the second call's input is merely blank (JS parity)" do
+      ctx = build_context(attributes: matching_attrs)
+      ctx.set_preview(experience_id: exp_id, variation_id: forced_variation_id)
+      expect(ctx.run_experience(exp_key).id).to eq(forced_variation_id) # sanity: preview active
+
+      ctx.set_preview(experience_id: "", variation_id: "")
+
+      # Blank input is inert on the CALL itself but does NOT clear a prior
+      # preview -- the previously forced variation still wins.
+      expect(ctx.run_experience(exp_key).id).to eq(forced_variation_id)
+    end
+  end
+
   describe "isolation across contexts from the same client (AC7)" do
     it "does not leak preview state into a second context for the same experience" do
       preview_ctx = build_context(visitor_id: "preview-owner", attributes: matching_attrs)

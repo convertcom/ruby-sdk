@@ -172,7 +172,19 @@ module ConvertSdk
     #   +total_weight <= 0+ or the list is empty).
     def select_bucket_anchored(variations, value)
       entries = anchored_allocations(variations)
-      total_weight = entries.sum { |entry| entry[:allocation] }
+      # NAIVE left-to-right fold — NOT +Array#sum+. Ruby's +Array#sum+ uses a
+      # Kahan-Babuska (Neumaier) compensated algorithm for Float arrays, which
+      # can differ from a plain fold at the float64 ULP level. The JS oracle
+      # computes +totalWeight+ via a naive +Array.prototype.reduce+
+      # (+bucketing-manager.ts:153-156+: +allocations.reduce((sum, {allocation})
+      # => sum + allocation, 0)+) — every other SDK (PHP/Python/Android/iOS)
+      # matches that same naive fold. A compensated sum here would diverge from
+      # every other SDK's +total_weight+ by 1+ ULP on some inputs, which can
+      # flip which arm a boundary +value+ resolves to (verified: a 3-way
+      # ~33.34/33.33/33.33-style split picks a different arm at its exact
+      # anchor boundary depending on the fold algorithm) — a cross-SDK parity
+      # break, not just a cosmetic rounding difference.
+      total_weight = entries.reduce(0.0) { |acc, entry| acc + entry[:allocation] }
       variation = total_weight.positive? ? anchored_walk(entries, total_weight, value) : nil
 
       @log_manager&.debug(
