@@ -242,6 +242,28 @@ RSpec.describe "Context zero-trace suppression on a preview-active Context (RB-6
       expect(client.api_manager.queue.size).to eq(0) # bucketing enqueue suppressed for every decided variation
       expect(stored_data_for(client, "visitor-1")).to be_nil # sticky persist suppressed for every decided variation
     end
+
+    it "forces the previewed TARGET (parity with #run_experience), replacing its natural bucket exactly once" do
+      client = build_client
+      ctx = preview_context(client, "visitor-1")
+
+      results = ctx.run_experiences
+
+      # The previewed TARGET is forced -- appears exactly once, as the FORCED
+      # variation, never its natural bucket and never both entries at once.
+      target_entries = results.select { |v| v.experience_key == target_exp_key }
+      expect(target_entries.size).to eq(1)
+      expect(target_entries.first.id).to eq(target_forced_variation_id)
+      expect(target_entries.first.id).not_to eq(target_natural_variation_id)
+
+      # Every OTHER experience is untouched -- still its natural bucket.
+      other = results.find { |v| v.experience_id == other_exp_id }
+      expect(other&.id).to eq(other_variation_id)
+
+      # Forcing changes nothing about zero-trace: still no enqueue, no persist.
+      expect(client.api_manager.queue.size).to eq(0)
+      expect(stored_data_for(client, "visitor-1")).to be_nil
+    end
   end
 
   describe "#track_conversion is a full no-op on a preview context" do

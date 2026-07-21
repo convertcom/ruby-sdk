@@ -350,13 +350,18 @@ module ConvertSdk
     # enqueue for THIS call (decisioning + sticky writes unaffected); the global
     # Config +tracking: false+ switch always wins (Story 4.5).
     #
-    # On a preview-active context (qs-03 AC6, RB-6) every decided variation here
-    # (none of which can be the previewed experience — {#run_experience} is the
-    # ONLY forced-decision path) is zero-trace exactly like {#run_experience}'s
-    # OTHER-experience branch: {#decision_attributes} suppresses the sticky
-    # persist and the per-variation tracking verdict is forced +false+. The
-    # {SystemEvents::BUCKETING} event still fires per variation (see
-    # {#run_experience}'s doc for the Ruby/JS divergence rationale).
+    # On a preview-active context (qs-03 AC6, RB-6) the previewed experience is
+    # FORCED to its preview variation here too — run-all forcing is API-agnostic,
+    # matching {#run_experience} and the PHP/Android/Python/iOS SDKs. Its
+    # normally-decided entry is dropped and the forced variation appended (or
+    # appended outright when the previewed experience is absent from the run-all
+    # set, e.g. a draft resolved only via +?exp=+); the forced entry fires no
+    # {SystemEvents::BUCKETING} event, exactly as {#run_experience}'s forced
+    # branch returns before {#fire_bucketing}. Every OTHER decided variation is
+    # zero-trace like {#run_experience}'s other-experience branch:
+    # {#decision_attributes} suppresses the sticky persist and the tracking
+    # verdict is forced +false+, while the {SystemEvents::BUCKETING} event still
+    # fires per variation (see {#run_experience}'s doc for the Ruby/JS divergence).
     #
     # @param attributes [Hash, nil] optional per-call visitor properties merged
     #   over the context attributes (deep-stringified). May carry +:enable_tracking+.
@@ -367,7 +372,9 @@ module ConvertSdk
 
       @data_manager.ensure_fresh_config!
       variations = manager.select_variations(@visitor_id, decision_attributes(attributes))
-      track = @preview.nil? && tracking_enabled_for_call?(attributes)
+      return force_preview_in_run_all(variations) if @preview
+
+      track = tracking_enabled_for_call?(attributes)
       variations.each { |variation| fire_bucketing(variation.experience_key, variation, track: track) }
       variations
     rescue StandardError => e
@@ -601,6 +608,21 @@ module ConvertSdk
     # an expected path.
     def forced_preview_variation(preview)
       @data_manager.get_preview_decision(preview[:experience], preview[:variation_id]) || RuleError::NO_DATA_FOUND
+    end
+
+    # {#run_experiences}'s preview branch, extracted to keep #run_experiences
+    # within RuboCop's ABC/complexity budget: drop the previewed experience's
+    # normally-decided entry (so it fires no BUCKETING event for the overridden
+    # decision), fire every OTHER experience's event with tracking suppressed,
+    # then append the forced variation. A defensive Sentinel from
+    # {#forced_preview_variation} (set_preview pre-validates, so not expected)
+    # appends nothing.
+    def force_preview_in_run_all(variations)
+      preview = @preview
+      others = variations.reject { |variation| variation.experience_key == preview[:experience_key] }
+      others.each { |variation| fire_bucketing(variation.experience_key, variation, track: false) }
+      forced = forced_preview_variation(preview)
+      forced.is_a?(Sentinel) ? others : others + [forced]
     end
 
     # Resolve the previewed experience for {#set_preview}: the installed
