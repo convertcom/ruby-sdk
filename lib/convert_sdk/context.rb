@@ -372,7 +372,8 @@ module ConvertSdk
 
       @data_manager.ensure_fresh_config!
       variations = manager.select_variations(@visitor_id, decision_attributes(attributes))
-      return force_preview_in_run_all(variations) if @preview
+      preview = @preview
+      return force_preview_in_run_all(variations, preview) if preview
 
       track = tracking_enabled_for_call?(attributes)
       variations.each { |variation| fire_bucketing(variation.experience_key, variation, track: track) }
@@ -617,8 +618,7 @@ module ConvertSdk
     # then append the forced variation. A defensive Sentinel from
     # {#forced_preview_variation} (set_preview pre-validates, so not expected)
     # appends nothing.
-    def force_preview_in_run_all(variations)
-      preview = @preview
+    def force_preview_in_run_all(variations, preview)
       others = variations.reject { |variation| variation.experience_key == preview[:experience_key] }
       others.each { |variation| fire_bucketing(variation.experience_key, variation, track: false) }
       forced = forced_preview_variation(preview)

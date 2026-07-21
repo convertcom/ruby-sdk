@@ -66,6 +66,8 @@ module ConvertSdk
 
     def forced_preview_variation: (Hash[Symbol, untyped] preview) -> (BucketedVariation | Sentinel)
 
+    def force_preview_in_run_all: (Array[BucketedVariation] variations, Hash[Symbol, untyped] preview) -> Array[BucketedVariation]
+
     def resolve_preview_experience: (String experience_id) -> Hash[String, untyped]?
 
     def fetch_preview_experience: (String experience_id) -> Hash[String, untyped]?
