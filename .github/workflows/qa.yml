@@ -38,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
         with:
           ruby-version: "3.4"
           bundler-cache: true
@@ -114,7 +114,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
         with:
           ruby-version: "3.4"
           bundler-cache: true
@@ -160,7 +160,7 @@ jobs:
         # leg, resolving an engine/version-compatible dependency set for each
         # Ruby. No Java/JDK setup for the JRuby leg — setup-ruby self-recovers
         # to Java 21.
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
@@ -191,7 +191,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
         with:
           ruby-version: "3.4"
           bundler-cache: true
@@ -225,7 +225,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
         with:
           ruby-version: "3.4"
           bundler-cache: true
@@ -238,7 +238,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
         with:
           ruby-version: "3.4"
           bundler-cache: true
