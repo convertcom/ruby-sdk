@@ -31,7 +31,15 @@ CONFIG_DEFAULTS_TABLE = {
   log_level: ConvertSdk::LogLevel::DEBUG,
   tracking: true,
   open_timeout: 5,
-  read_timeout: 10
+  read_timeout: 10,
+  # qs-02 (RB-1): network cache-level signal — default nil (no-op); config-side
+  # validation/reader only here, URL composition is RB-2 (out of scope).
+  cache_level: nil,
+  # qs-03 (RB-1): QA config-transport token — default nil (no-op); config-side
+  # validation/reader only here, URL composition + always-live caching + secret
+  # registration are exercised in client_spec.rb / client_refresh_spec.rb /
+  # redactor_spec.rb.
+  debug_token: nil
 }.freeze
 
 # Each option => a non-default override value, to prove every option is settable
@@ -53,8 +61,31 @@ CONFIG_OVERRIDE_TABLE = {
   log_level: ConvertSdk::LogLevel::WARN,
   tracking: false,
   open_timeout: 3,
-  read_timeout: 7
+  read_timeout: 7,
+  # qs-02 (RB-1): the only non-default accepted value.
+  cache_level: "low",
+  # qs-03 (RB-1): any String is accepted (no allow-list, unlike cache_level).
+  debug_token: "qa-debug-tok-123"
 }.freeze
+
+# qs-02 (RB-1): values cache_level must reject — nil / "low" are the only
+# accepted values (AC3). Kept as a plain array rather than folded into
+# CONFIG_INVALID_TABLE below because each case needs THREE independent
+# message assertions (names the option, AND mentions both allowed values)
+# instead of the single regex the rest of the matrix uses. A single combined
+# regex via chained lookaheads is NOT safe here: verified empirically that
+# Ruby's regex engine (Onigmo, pinned CRuby 3.3.0) can report a false match
+# for `(?=.*a)(?=.*b)` against strings containing NEITHER substring, e.g.
+# `"hello_level" =~ /(?=.*level)(?=.*xyz)/ # => 2` even though "xyz" is
+# absent — so three independent single-literal `match` calls are used
+# instead (each verified safe in isolation).
+CACHE_LEVEL_INVALID_VALUES = [
+  "high", # wrong string — only "low" is a valid non-nil value
+  "LOW",  # case-sensitive — only lowercase "low" matches
+  "",     # empty string
+  :low,   # symbol, not a String
+  1       # Integer, not a String
+].freeze
 
 # Validation matrix: each invalid kwargs payload => a Regexp the raised
 # ArgumentError message must match (proves the message names the offending
@@ -77,7 +108,13 @@ CONFIG_INVALID_TABLE = {
   "non-String config_endpoint" => [{ sdk_key: "k", config_endpoint: 1 }, /config_endpoint.*String/i],
   "non-numeric open_timeout" => [{ sdk_key: "k", open_timeout: "x" }, /open_timeout/i],
   "non-numeric read_timeout" => [{ sdk_key: "k", read_timeout: "x" }, /read_timeout/i],
-  "unknown option key" => [{ sdk_key: "k", bogus_option: true }, /bogus_option|unknown/i]
+  "unknown option key" => [{ sdk_key: "k", bogus_option: true }, /bogus_option|unknown/i],
+  # qs-03 (RB-1) — debug_token is a plain String-or-nil option (no fixed
+  # allow-list like cache_level), so it fits the existing single-regex shape
+  # rather than the CACHE_LEVEL_INVALID_VALUES "names both allowed values"
+  # treatment below.
+  "non-String, non-nil debug_token (Integer)" => [{ sdk_key: "k", debug_token: 123 }, /debug_token.*String/i],
+  "non-String, non-nil debug_token (Array)" => [{ sdk_key: "k", debug_token: ["x"] }, /debug_token.*String/i]
 }.freeze
 
 # sdk_key/sdk_key_secret/data are presence options the minimal valid config has
@@ -151,6 +188,12 @@ RSpec.describe ConvertSdk::Config do
       expect(build.to_internal).to be_frozen
     end
 
+    it "never includes debug_token in the internal wire config (qs-03 RB-1, AC3)" do
+      internal = build(debug_token: "qa-debug-tok-123").to_internal
+      expect(internal.keys).not_to include("debugToken")
+      expect(internal.values).not_to include("qa-debug-tok-123")
+    end
+
     it "carries the canonical flush_interval reader (event_release_interval is retired)" do
       expect(described_class.instance_methods).to include(:flush_interval)
       expect(described_class.instance_methods).not_to include(:event_release_interval)
@@ -168,6 +211,27 @@ RSpec.describe ConvertSdk::Config do
 
     it "emits a nil internal flush wire value when flush_interval is timer-off" do
       expect(build(flush_interval: nil).to_internal["releaseInterval"]).to be_nil
+    end
+  end
+
+  describe "cache_level (qs-02 network cache-level option, RB-1 — config validation only)" do
+    # Omitted-from-config-options -> nil default, and "low" -> accepted are
+    # already exercised by the CONFIG_DEFAULTS_TABLE / CONFIG_OVERRIDE_TABLE
+    # sweeps above (cache_level is a row in both). The one acceptance shape
+    # those sweeps don't cover is passing nil *explicitly*, which is not the
+    # same code path as omitting the key.
+    it "accepts an explicit nil (same no-op as the default)" do
+      expect(build(cache_level: nil).cache_level).to be_nil
+    end
+  end
+
+  describe "debug_token (qs-03 experiment preview, RB-1 — config validation only)" do
+    # Omitted -> nil default, and an accepted String override, are already
+    # exercised by the CONFIG_DEFAULTS_TABLE / CONFIG_OVERRIDE_TABLE sweeps
+    # above (debug_token is a row in both). Only the explicit-nil shape (not
+    # the same code path as omitting the key) gets its own example here.
+    it "accepts an explicit nil (same no-op as the default)" do
+      expect(build(debug_token: nil).debug_token).to be_nil
     end
   end
 
@@ -195,6 +259,20 @@ RSpec.describe ConvertSdk::Config do
     it "raises stdlib ArgumentError (no custom exception subclass)" do
       expect { described_class.new }.to(raise_error { |error| expect(error.class).to eq(ArgumentError) })
     end
+
+    # qs-02 (RB-1): cache_level's allow-list (nil / "low") gets its own loop —
+    # see the CACHE_LEVEL_INVALID_VALUES comment above for why a single
+    # combined-lookahead regex isn't used for the "names both allowed values"
+    # assertion.
+    CACHE_LEVEL_INVALID_VALUES.each do |bad_value|
+      it "raises ArgumentError naming both allowed values for cache_level #{bad_value.inspect}" do
+        expect { described_class.new(sdk_key: "k", cache_level: bad_value) }.to(raise_error(ArgumentError) do |error|
+          expect(error.message).to match(/cache_level/i)
+          expect(error.message).to match(/nil/i)
+          expect(error.message).to match(/low/i)
+        end)
+      end
+    end
   end
 
   describe "secret registration hook (NFR5)" do
@@ -212,6 +290,18 @@ RSpec.describe ConvertSdk::Config do
     end
 
     it "registers only sdk_key when no secret is given" do
+      described_class.new(sdk_key: "acct/proj", log_manager: log_manager)
+      expect(registered).to eq(["acct/proj"])
+    end
+
+    it "registers debug_token alongside sdk_key/sdk_key_secret when set (qs-03 RB-1, AC3)" do
+      described_class.new(
+        sdk_key: "acct/proj", sdk_key_secret: "shh", debug_token: "qa-debug-tok-123", log_manager: log_manager
+      )
+      expect(registered).to contain_exactly("acct/proj", "shh", "qa-debug-tok-123")
+    end
+
+    it "registers nothing extra for debug_token when it is not set" do
       described_class.new(sdk_key: "acct/proj", log_manager: log_manager)
       expect(registered).to eq(["acct/proj"])
     end

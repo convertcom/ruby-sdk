@@ -347,12 +347,15 @@ module ConvertSdk
     # Fetch config through the HTTP port and install it on success. A failed
     # response degrades gracefully: it MAY fall back to a non-stale cached entry
     # from the store (meaningful across processes with a shared store like
-    # Redis), otherwise a +warn+ line, no config, no raise.
+    # Redis), otherwise a +warn+ line, no config, no raise. The store fallback
+    # is skipped entirely when +debug_token+ is configured (qs-03 AC2 —
+    # always-live: a stale copy is misleading during QA, so a failed live
+    # fetch degrades straight to the no-config warn path).
     def fetch_and_install_config
       response = @http_client.request(method: :get, url: config_url, headers: fetch_headers)
       if response.success? && response.body.is_a?(Hash)
         install(response.body, "Client#initialize: installed fetched config")
-      elsif @data_manager.install_from_cache_if_fresh
+      elsif @config.debug_token.nil? && @data_manager.install_from_cache_if_fresh
         @event_manager.fire(SystemEvents::READY, deferred: true)
       else
         @log_manager.warn(
@@ -378,14 +381,46 @@ module ConvertSdk
       end
     end
 
-    # Build the config-fetch URL: +{config_endpoint}/config/{sdkKey}+ with an
-    # +environment+ query parameter appended only when one is configured.
-    def config_url
+    # Build the config-fetch URL: +{config_endpoint}/config/{sdkKey}+ with
+    # query params appended in a fixed order — +environment+ (when configured),
+    # then +_conv_low_cache=1+ (when effective low-cache is active), then
+    # +debug_token=<value>+ (when configured) — joined with +&+ and prefixed
+    # with a single +?+ only when at least one param is present. +environment+
+    # stays first so the no-cache_level/no-override shape (the pre-RB-2 AC2
+    # regression lock) stays byte-identical: bare URL when no environment,
+    # +?environment=...+ with no trailing +&+ otherwise.
+    #
+    # +force_low_cache:+ is a private, internal-only seam (qs-03's per-fetch
+    # experiment-preview override) — not part of the public API. Effective
+    # low-cache is an OR of the override, the configured +cache_level+, and a
+    # configured +debug_token+ (qs-03 AC1 — a debug token always forces
+    # low-cache, regardless of +cache_level+):
+    # +force_low_cache || @config.cache_level == "low" || !@config.debug_token.nil?+.
+    # +debug_token+ requires no call-site argument — every #config_url call
+    # (construction fetch, refresh tick, timer-off refetch) picks it up
+    # directly from +@config.debug_token+.
+    def config_url(force_low_cache: false)
       url = "#{@config.config_endpoint}/config/#{@config.sdk_key}"
-      env = @config.environment
-      return url if env.nil?
+      params = config_url_params(force_low_cache)
 
-      "#{url}?environment=#{URI.encode_www_form_component(env)}"
+      return url if params.empty?
+
+      "#{url}?#{params.join("&")}"
+    end
+
+    # The ordered query-param list for {#config_url} — extracted so the URL
+    # builder itself stays small: +environment+, then +_conv_low_cache=1+
+    # (effective low-cache), then +debug_token+, each only when applicable.
+    def config_url_params(force_low_cache)
+      env = @config.environment
+      debug_token = @config.debug_token
+      low_cache = force_low_cache || @config.cache_level == "low" || !debug_token.nil?
+
+      params = [] #: Array[String]
+      params << "environment=#{URI.encode_www_form_component(env)}" unless env.nil?
+      params << "_conv_low_cache=1" if low_cache
+      params << "debug_token=#{URI.encode_www_form_component(debug_token)}" unless debug_token.nil?
+      params
     end
 
     # The fetch headers: an +Authorization: Bearer {secret}+ value when a secret

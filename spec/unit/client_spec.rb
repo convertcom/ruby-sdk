@@ -2,6 +2,81 @@
 
 require "spec_helper"
 
+# qs-02 (RB-2) — the config-fetch URL builder's cache_level composition.
+#
+# Tables are top-level constants (RuboCop forbids constants inside blocks —
+# see spec/unit/config_spec.rb for the same convention). Parameterized per the
+# qs-02 spec's own "parameterized, not copy-pasted" mandate and the project's
+# SonarQube new-code-duplication guardrail.
+#
+# AC2 regression lock: with no cache_level configured, #config_url (called
+# with no override — the seam's default) must be BYTE-IDENTICAL to the
+# pre-RB-2 shape. These two rows are asserted with exact string equality,
+# never param-presence parsing, because byte-identity is the whole point.
+CONFIG_URL_BASE = "#{HttpStubs::CONFIG_HOST}/config/sdk-key-1".freeze
+CONFIG_URL_BYTE_IDENTICAL_TABLE = {
+  "no cache_level, no environment" => {
+    cache_level: nil, environment: nil, expected: CONFIG_URL_BASE
+  },
+  "no cache_level, with environment" => {
+    cache_level: nil, environment: "prod", expected: "#{CONFIG_URL_BASE}?environment=prod"
+  }
+}.freeze
+
+# AC1 — cache_level: "low" must carry _conv_low_cache=1, composing with
+# environment when both are set. Order is unspecified (either is acceptable
+# per qs-02), so these rows assert on parsed query-param presence, not a
+# literal string.
+CONFIG_URL_LOW_CACHE_TABLE = {
+  "cache_level low, no environment" => { cache_level: "low", environment: nil },
+  "cache_level low, with environment" => { cache_level: "low", environment: "prod" }
+}.freeze
+
+# Contract #4 — the private per-fetch force_low_cache: override (the qs-03
+# experiment-preview seam). Effective low-cache = override OR configured
+# cache_level. Every row here configures cache_level: nil so the override's
+# effect is proven INDEPENDENT of the configured option (composition with a
+# configured "low" is covered separately below).
+CONFIG_URL_FORCE_OVERRIDE_TABLE = {
+  "override true, no environment" => {
+    environment: nil, force_low_cache: true, expect_low_cache: true, expect_environment: false
+  },
+  "override true, with environment (composes)" => {
+    environment: "prod", force_low_cache: true, expect_low_cache: true, expect_environment: true
+  },
+  "override false (explicit), no-op" => {
+    environment: nil, force_low_cache: false, expect_low_cache: false, expect_environment: false
+  }
+}.freeze
+
+# qs-03 (RB-1) — AC1's debug_token transport contract, table-driven over the
+# full debug_token (set/unset) x environment (set/nil) x cache_level (nil/low)
+# cross-product. Each row's EXPECTED param presence is computed inline in the
+# example (not baked into the table) since it is a pure function of the row's
+# own three values — see "AC1 — debug_token transport" below.
+DEBUG_TOKEN_TRANSPORT_TABLE = {
+  "debug_token set, no environment, no cache_level" => { debug_token: "tok1", environment: nil, cache_level: nil },
+  "debug_token set, with environment, no cache_level" => {
+    debug_token: "tok1", environment: "prod", cache_level: nil
+  },
+  "debug_token set, no environment, cache_level low" => {
+    debug_token: "tok1", environment: nil, cache_level: "low"
+  },
+  "debug_token set, with environment, cache_level low" => {
+    debug_token: "tok1", environment: "prod", cache_level: "low"
+  },
+  "debug_token unset, no environment, no cache_level" => { debug_token: nil, environment: nil, cache_level: nil },
+  "debug_token unset, with environment, no cache_level" => {
+    debug_token: nil, environment: "prod", cache_level: nil
+  },
+  "debug_token unset, no environment, cache_level low" => {
+    debug_token: nil, environment: nil, cache_level: "low"
+  },
+  "debug_token unset, with environment, cache_level low" => {
+    debug_token: nil, environment: "prod", cache_level: "low"
+  }
+}.freeze
+
 RSpec.describe ConvertSdk::Client do
   # All clients fetch against the opaque test config host (never the real CDN).
   let(:base_options) { { config_endpoint: HttpStubs::CONFIG_HOST } }
@@ -9,6 +84,144 @@ RSpec.describe ConvertSdk::Client do
   # Build a client through the real public factory with test-host endpoints.
   def create(**options)
     ConvertSdk.create(**base_options, **options)
+  end
+
+  # Parse a URL's query string into a plain Hash for param-presence/composition
+  # assertions (AC1 / contract #4) — never a brittle full-string match, except
+  # where the spec explicitly calls for byte-identity (AC2).
+  def query_params(url)
+    query = URI.parse(url).query
+    return {} if query.nil?
+
+    URI.decode_www_form(query).to_h
+  end
+
+  # qs-02 (RB-2) — the private #config_url builder's cache_level composition.
+  # Direct-data mode (no sdk_key fetch) builds a fully-wired Client with zero
+  # network I/O, so the private method is exercised via #send — the same idiom
+  # already used in this file for #install (see "ready fires exactly once"
+  # below) — rather than threading a per-fetch override through the public
+  # fetch path (which has no seam to pass one through yet).
+  describe "#config_url — cache_level composition (qs-02 RB-2)" do
+    def client_for(cache_level:, environment:)
+      create(data: {}, sdk_key: "sdk-key-1", cache_level: cache_level, environment: environment)
+    end
+
+    describe "AC2 — byte-identical regression lock (no cache_level configured)" do
+      CONFIG_URL_BYTE_IDENTICAL_TABLE.each do |label, row|
+        it "produces the exact pre-RB-2 URL for #{label}" do
+          client = client_for(cache_level: row[:cache_level], environment: row[:environment])
+          expect(client.send(:config_url)).to eq(row[:expected])
+        end
+      end
+
+      it "the seam's default (no force_low_cache: argument) matches the explicit false default" do
+        client = client_for(cache_level: nil, environment: nil)
+        expect(client.send(:config_url)).to eq(client.send(:config_url, force_low_cache: false))
+      end
+    end
+
+    describe "AC1 — cache_level: \"low\" carries _conv_low_cache=1" do
+      CONFIG_URL_LOW_CACHE_TABLE.each do |label, row|
+        it "sets _conv_low_cache=1 for #{label}, composing with environment when set" do
+          client = client_for(cache_level: row[:cache_level], environment: row[:environment])
+          params = query_params(client.send(:config_url))
+
+          expect(params["_conv_low_cache"]).to eq("1")
+          if row[:environment]
+            expect(params["environment"]).to eq(row[:environment])
+          else
+            expect(params).not_to have_key("environment")
+          end
+        end
+      end
+    end
+
+    describe "contract #4 — private per-fetch force_low_cache: override (qs-03 seam)" do
+      CONFIG_URL_FORCE_OVERRIDE_TABLE.each do |label, row|
+        it label do
+          client = client_for(cache_level: nil, environment: row[:environment])
+          params = query_params(client.send(:config_url, force_low_cache: row[:force_low_cache]))
+
+          if row[:expect_low_cache]
+            expect(params["_conv_low_cache"]).to eq("1")
+          else
+            expect(params).not_to have_key("_conv_low_cache")
+          end
+
+          if row[:expect_environment]
+            expect(params["environment"]).to eq(row[:environment])
+          else
+            expect(params).not_to have_key("environment")
+          end
+        end
+      end
+
+      it "is independent of the configured cache_level — override forces low-cache when cache_level is nil" do
+        client = client_for(cache_level: nil, environment: nil)
+        expect(query_params(client.send(:config_url, force_low_cache: true))).to include("_conv_low_cache" => "1")
+      end
+
+      it "composes as OR — override false does not suppress an already-configured cache_level: \"low\"" do
+        client = client_for(cache_level: "low", environment: nil)
+        expect(query_params(client.send(:config_url, force_low_cache: false))).to include("_conv_low_cache" => "1")
+      end
+    end
+
+    # qs-03 (RB-1) — the public debug_token: config option. Unlike
+    # force_low_cache: (a private per-fetch seam), debug_token composes through
+    # the SAME #config_url builder with no extra call-site argument: every
+    # config_url call (construction fetch, refresh tick, timer-off refetch)
+    # picks it up from @config.debug_token automatically. Table-driven over the
+    # full debug_token x environment x cache_level cross-product (8 rows) so
+    # every composition combination is proven without copy-pasting examples.
+    describe "AC1 — debug_token transport (qs-03 RB-1)" do
+      DEBUG_TOKEN_TRANSPORT_TABLE.each do |label, row|
+        it "composes params correctly for #{label}" do
+          client = create(
+            data: {}, sdk_key: "sdk-key-1",
+            debug_token: row[:debug_token], environment: row[:environment], cache_level: row[:cache_level]
+          )
+          params = query_params(client.send(:config_url))
+
+          if row[:debug_token]
+            expect(params["debug_token"]).to eq(row[:debug_token])
+            # Forced regardless of cache_level — the "AND _conv_low_cache=1"
+            # half of AC1's normative contract.
+            expect(params["_conv_low_cache"]).to eq("1")
+          else
+            expect(params).not_to have_key("debug_token")
+            if row[:cache_level] == "low"
+              expect(params["_conv_low_cache"]).to eq("1")
+            else
+              expect(params).not_to have_key("_conv_low_cache")
+            end
+          end
+
+          if row[:environment]
+            expect(params["environment"]).to eq(row[:environment])
+          else
+            expect(params).not_to have_key("environment")
+          end
+        end
+      end
+
+      it "orders params as environment, then _conv_low_cache, then debug_token when all three compose" do
+        client = create(data: {}, sdk_key: "sdk-key-1", debug_token: "tok1", environment: "prod", cache_level: "low")
+        expected = "#{CONFIG_URL_BASE}?environment=prod&_conv_low_cache=1&debug_token=tok1"
+        expect(client.send(:config_url)).to eq(expected)
+      end
+
+      it "carries debug_token/_conv_low_cache through the refresh path (refetch_config), same as the initial fetch" do
+        stub_request(:get, %r{/config/sdk-key-1})
+          .to_return(status: 200, body: JSON.generate(vendored_config), headers: json_headers)
+        client = create(sdk_key: "sdk-key-1", debug_token: "tok1")
+        client.send(:refetch_config)
+        expect(a_request(:get, %r{/config/sdk-key-1})
+          .with(query: hash_including("debug_token" => "tok1", "_conv_low_cache" => "1")))
+          .to have_been_made.times(2) # construction fetch + the explicit refetch above
+      end
+    end
   end
 
   describe "fetch mode — config fetch via HttpClient (AC#1)" do

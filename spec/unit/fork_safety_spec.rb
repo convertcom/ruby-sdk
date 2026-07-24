@@ -6,9 +6,13 @@ require "spec_helper"
 # proofs live in spec/integration/fork_safety_spec.rb).
 #
 # Two surfaces are exercised here without forking:
-#   * ApiManager registers exactly ONE ForkGuard child-callback that clears its
-#     queue (child starts empty — no double-delivery), and the PID check at the
-#     SINGLE release entry (#release_queue) re-arms a stale process before
+#   * ApiManager registers TWO ForkGuard child-callbacks at construction: the
+#     Story 4.4 queue-ownership clear (child starts empty — no double-
+#     delivery) and, as of RB-3 / qs-03 AC8, the process-wide
+#     #get_config_by_experience memo clear (ApiManager.
+#     reset_config_by_experience_cache_for_tests!) — registered ALONGSIDE, not
+#     replacing, the queue-ownership callback. The PID check at the SINGLE
+#     release entry (#release_queue) re-arms a stale process before
 #     proceeding (covers Process.daemon, which bypasses the _fork hook).
 #   * Logging at the PID-mismatch boundary and the queue-ownership clear.
 RSpec.describe "Fork-safety composition (Story 4.4)" do
@@ -49,10 +53,10 @@ RSpec.describe "Fork-safety composition (Story 4.4)" do
   end
 
   describe "ApiManager queue-ownership child-callback (AC#2)" do
-    it "registers exactly one child-callback at construction" do
+    it "registers exactly two child-callbacks at construction (queue-ownership clear + RB-3 memo clear)" do
       before_count = child_callbacks.size
       build_api_manager
-      expect(child_callbacks.size - before_count).to eq(1)
+      expect(child_callbacks.size - before_count).to eq(2)
     end
 
     it "clears its inherited queue when the registered child-callback fires" do

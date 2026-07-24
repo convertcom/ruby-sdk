@@ -95,4 +95,37 @@ RSpec.describe ConvertSdk::Redactor do
       expect(out).not_to include("?ts=1")
     end
   end
+
+  # qs-03 (RB-1, AC3) — token hygiene: debug_token follows the EXACT same
+  # sdk_key_secret redaction treatment (Config#register_secrets arms the
+  # LogManager's Redactor at construction, before any log line can carry it).
+  # These examples build the real Config -> LogManager -> Redactor pipeline
+  # (not a bare Redactor.new(["..."])) so the assertion proves the FULL wiring,
+  # not just the Redactor primitive in isolation.
+  #
+  # A URL-embedded debug_token (e.g. the config-fetch URL logged by HttpClient)
+  # is already covered structurally by the pre-existing "#redact — URL query
+  # stripping" examples above: the query string is stripped WHOLESALE for any
+  # http(s) URL, regardless of how a token within it is encoded, so no
+  # debug_token-specific URL test is needed here. These examples instead cover
+  # the complementary case AC3 introduces: a debug_token value appearing in a
+  # PLAIN (non-URL) log line or inspect dump, which is masked by literal
+  # secret registration.
+  describe "debug_token hygiene (qs-03 RB-1, AC3 — sdk_key_secret parity)" do
+    let(:sink) { CapturingSink.new }
+    let(:log_manager) { ConvertSdk::LogManager.new(level: ConvertSdk::LogLevel::TRACE, sink: sink) }
+
+    it "masks the debug_token value in a plain log line once Config registers it" do
+      ConvertSdk::Config.new(sdk_key: "acct/proj", debug_token: "qa-debug-tok-999", log_manager: log_manager)
+      log_manager.debug("probe containing qa-debug-tok-999 raw")
+      expect(sink.joined).to eq("probe containing qa-d… raw")
+    end
+
+    it "never lets the raw debug_token value reach any captured log line" do
+      ConvertSdk::Config.new(sdk_key: "acct/proj", debug_token: "qa-debug-tok-999", log_manager: log_manager)
+      log_manager.info("config url contains qa-debug-tok-999 in query")
+      log_manager.error("boom near qa-debug-tok-999")
+      expect(sink.joined).not_to include("qa-debug-tok-999")
+    end
+  end
 end

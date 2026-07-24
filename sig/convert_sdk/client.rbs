@@ -67,7 +67,9 @@ module ConvertSdk
 
     def install: (untyped source, String log_message) -> void
 
-    def config_url: () -> String
+    def config_url: (?force_low_cache: bool) -> String
+
+    def config_url_params: (bool force_low_cache) -> Array[String]
 
     def fetch_headers: () -> Hash[String, String]
 

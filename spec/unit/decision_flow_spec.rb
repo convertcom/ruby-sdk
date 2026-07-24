@@ -141,4 +141,32 @@ RSpec.describe "Sticky bucketing decision flow" do
       expect(variation_ids).to include(store.get(store_key)["bucketing"][exp_id])
     end
   end
+
+  describe "sticky decision wins over BOTH bucketing layouts (AC8, qs-01 anchored bucketing)" do
+    # DataManager#retrieve_bucketing returns the stored decision (sticky_variation)
+    # BEFORE ever calling bucket_fresh -- the version gate and the packed/anchored
+    # dispatch inside bucket_fresh are never reached once a visitor is bucketed.
+    # This holds identically whether the experience is stamped version 11
+    # (packed) or version > 11 (anchored); the guard sits ahead of the layout
+    # dispatch, so no new production code is needed for this AC (qs-01).
+    def anchored_config
+      cfg = stringify(ConfigFixture.config)
+      cfg["experiences"][0]["version"] = 12
+      cfg
+    end
+
+    it "returns the stored variation without ever invoking either bucketing method" do
+      # Bucket once under the ANCHORED-gated experience to create a stored decision.
+      first = build(anchored_config).select_variation(visitor, exp_key, attrs)
+      expect(first).to be_a(ConvertSdk::BucketedVariation)
+
+      # Re-run: neither the packed nor the anchored bucketing method may be
+      # consulted -- the sticky read short-circuits before bucket_fresh's
+      # version gate ever runs.
+      expect(bucketing_manager).not_to receive(:bucket_for_visitor)
+      expect(bucketing_manager).not_to receive(:bucket_for_visitor_anchored)
+      second = build(anchored_config).select_variation(visitor, exp_key, attrs)
+      expect(second.id).to eq(first.id)
+    end
+  end
 end

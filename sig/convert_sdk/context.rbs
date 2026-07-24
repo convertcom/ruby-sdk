@@ -15,6 +15,7 @@ module ConvertSdk
     @feature_manager: FeatureManager?
     @segments_manager: SegmentsManager?
     @api_manager: ApiManager?
+    @preview: Hash[Symbol, untyped]?
 
     attr_reader visitor_id: String
     attr_reader attributes: Hash[String, untyped]
@@ -39,6 +40,8 @@ module ConvertSdk
 
     def get_config_entity: (String key, (String | Symbol) entity_type) -> Hash[String, untyped]?
 
+    def set_preview: (experience_id: String, variation_id: String) -> self
+
     def run_experience: (String key, ?Hash[untyped, untyped]? attributes) -> (BucketedVariation | Sentinel)
 
     def run_experiences: (?Hash[untyped, untyped]? attributes) -> Array[BucketedVariation]
@@ -58,6 +61,18 @@ module ConvertSdk
     ) -> self
 
     private
+
+    def warn_preview_inert: (String detail, ?clear: bool) -> self
+
+    def forced_preview_variation: (Hash[Symbol, untyped] preview) -> (BucketedVariation | Sentinel)
+
+    def force_preview_in_run_all: (Array[BucketedVariation] variations, Hash[Symbol, untyped] preview) -> Array[BucketedVariation]
+
+    def resolve_preview_experience: (String experience_id) -> Hash[String, untyped]?
+
+    def fetch_preview_experience: (String experience_id) -> Hash[String, untyped]?
+
+    def blank?: (untyped value) -> bool
 
     def fire_conversion: (String goal_key, Hash[String, untyped] data) -> void
 

@@ -92,23 +92,27 @@ module ConvertSdk
     #   so a Context can supply its own resolution without re-reading config.
     # @param project_resolver [#call, nil] returns the project id for the visitor
     #   store key; defaults to {#project_id}.
+    # @param config_cache_disabled [Boolean] when true, {#cache_config} is a
+    #   no-op — the config-cache WRITE is suppressed. Ruby-SDK-only hardening
+    #   (qs-03, NOT a JS-parity concern): while a +debug_token+ is configured,
+    #   a shared store (e.g. Redis) must never be poisoned with a
+    #   debug-widened config that a production reader could later pick up.
+    #   Sourced by {ConvertSdk.build_data_manager} from +!config.debug_token.nil?+.
+    #   Defaults to +false+ (cache writes enabled) for standalone construction.
     def initialize(log_manager:, data_store_manager: nil, config_key: nil, ttl: nil,
                    clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }, refetch: nil,
                    bucketing_manager: nil, rule_manager: nil,
-                   account_resolver: nil, project_resolver: nil)
+                   account_resolver: nil, project_resolver: nil, config_cache_disabled: false)
       @log_manager = log_manager
       @data_store_manager = data_store_manager
       @config_key = config_key
       @ttl = ttl
+      @config_cache_disabled = config_cache_disabled
       # Timer-off (Lambda/CLI) mode is exactly "no refresh interval configured".
       @timer_off = ttl.nil?
       @clock = clock
       @refetch = refetch
-      # Decision-flow collaborators (Story 2.11). Config-read-only when absent.
-      @bucketing_manager = bucketing_manager
-      @rule_manager = rule_manager
-      @account_resolver = account_resolver || -> { account_id }
-      @project_resolver = project_resolver || -> { project_id }
+      assign_collaborators(bucketing_manager, rule_manager, account_resolver, project_resolver)
       # The deep-frozen config envelope, or nil before the first install. Read
       # lock-free by every reader; replaced atomically under @config_mutex.
       @config = nil #: Hash[String, untyped]?
@@ -291,6 +295,17 @@ module ConvertSdk
       find_by_key(experiences, key)
     end
 
+    # @param id [String] the experience +id+ to find (+to_s+ compared — ids may
+    #   arrive as Integer or String across the wire, e.g. a caller-supplied
+    #   +experience_id+ vs. the config's JSON-parsed +id+). Used by the qs-03
+    #   preview resolution ({Context#set_preview}) to look the previewed
+    #   experience up against the CURRENT installed config before falling back
+    #   to the +?exp=+ live fetch.
+    # @return [Hash, nil] the frozen experience with that id, or nil.
+    def experience_by_id(experience_id)
+      find_by_id(experiences, experience_id)
+    end
+
     # @param key [String] the feature +key+ to find.
     # @return [Hash, nil] the frozen feature with that key, or nil.
     def feature_by_key(key)
@@ -336,6 +351,32 @@ module ConvertSdk
       return RuleError::NO_DATA_FOUND if experience.nil?
 
       retrieve_bucketing(visitor_id, experience, attributes)
+    end
+
+    # ============================ PREVIEW (qs-03) ===========================
+    # Force-decide a specific variation on a caller-supplied experience,
+    # bypassing the ENTIRE decision flow above: audiences, segments, locations,
+    # the environment check, experience status, variation status/traffic
+    # filters, stored decisions, and the bucketing hash. Mirrors JS
+    # data-manager.ts +getPreviewDecision+ (qs-03 / SDK-4).
+    #
+    # PURE by construction: reads ONLY +experience["variations"]+ (via
+    # {#retrieve_variation}) -- never the installed config -- because a preview
+    # experience fetched via +?exp=+ may not be registered there. Has ZERO side
+    # effects: never calls {#persist_bucketing} / +merge_visitor_data+ and never
+    # enqueues anything (this method has no store or transport collaborator to
+    # call in the first place).
+    #
+    # @param experience [Hash] the experience config entity to preview (may be
+    #   absent from the installed config).
+    # @param variation_id [String] the variation id to force (+to_s+ compared).
+    # @return [BucketedVariation, nil] the forced decision, or nil when
+    #   +variation_id+ does not match any variation on +experience+.
+    def get_preview_decision(experience, variation_id)
+      variation = retrieve_variation(experience, variation_id)
+      return nil if variation.nil?
+
+      build_bucketed_variation(experience, variation, nil)
     end
 
     # ========================== CONVERSION TRACKING =========================
@@ -392,6 +433,17 @@ module ConvertSdk
     end
 
     private
+
+    # Assign the decision-flow collaborators (Story 2.11) and their store-key
+    # resolvers — extracted from #initialize to keep it small. Collaborators
+    # are config-read-only when absent; resolvers default to this manager's
+    # own {#account_id} / {#project_id} readers when not injected.
+    def assign_collaborators(bucketing_manager, rule_manager, account_resolver, project_resolver)
+      @bucketing_manager = bucketing_manager
+      @rule_manager = rule_manager
+      @account_resolver = account_resolver || -> { account_id }
+      @project_resolver = project_resolver || -> { project_id }
+    end
 
     # The atomic check-then-mark (Story 4.3 / qs-01). Runs the dedup decision AND
     # the mark inside ONE store-merge block (the merge mutex). Returns true when
@@ -476,6 +528,35 @@ module ConvertSdk
       bucketing.is_a?(Hash) ? bucketing : {}
     end
 
+    # qs-04 mutual-exclusion resolver builder: a per-call pure
+    # +->(target_experience_key) { true | false | nil }+ closure over
+    # +visitor_id+ ONLY (no global state, no cross-visitor memoization — a
+    # fresh lambda per {#match_rules_by_field} call) matching
+    # {RuleManager#is_rule_matched}'s +resolver:+ contract exactly.
+    #
+    # Resolution (the qs-04 normative algorithm):
+    #   target       = config experience whose key == target_experience_key
+    #   bucketed_raw = target exists AND the visitor's stored bucketing map
+    #                  contains an entry for target["id"].to_s
+    #
+    # Both reads are pure: {#experience_by_key} reads the frozen installed
+    # config; {#stored_bucketing_map} reads the visitor's StoreData via the
+    # store seam. Neither ever triggers bucketing of the target
+    # (BucketingManager is never called here), never writes (no
+    # +merge_visitor_data+), and never tracks — the AC5 read-only invariant.
+    #
+    # @return [Proc] +nil+ from the built lambda means "target key
+    #   unresolvable" — RuleManager itself logs the AC8 warning naming the key
+    #   and applies negation around a +bucketed_raw = false+.
+    def mutual_exclusion_resolver(visitor_id)
+      lambda do |target_experience_key|
+        target = experience_by_key(target_experience_key)
+        next nil if target.nil?
+
+        stored_bucketing_map(visitor_id).key?(target["id"].to_s)
+      end
+    end
+
     # Steps 1-7: resolve the experience and run every eligibility gate up to (but
     # not including) traffic allocation. Returns the matched experience Hash, a
     # {Sentinel} (a propagated {RuleError} from a rule walk), or +nil+ (a plain
@@ -495,7 +576,11 @@ module ConvertSdk
       return reason_miss(experience, "location not match") unless location_outcome
 
       # Step 6 — audiences (permanent skipped when bucketed; transient always).
-      audiences_outcome = match_audiences(experience, attributes[:visitor_properties], is_bucketed)
+      # qs-04: build the mutual-exclusion resolver here (visitor_id is in scope)
+      # and thread it down through match_audiences -> matched_audiences ->
+      # RuleManager#is_rule_matched — the ONLY site that builds it.
+      resolver = mutual_exclusion_resolver(visitor_id)
+      audiences_outcome = match_audiences(experience, attributes[:visitor_properties], is_bucketed, resolver)
       return audiences_outcome if audiences_outcome.is_a?(Sentinel)
 
       # Step 7 — custom segments. Both must pass to reach variation selection.
@@ -566,8 +651,7 @@ module ConvertSdk
     # No covering bucket OR a drifted-out selected id -> VARIATION_NOT_DECIDED.
     def bucket_fresh(visitor_id, experience, attributes)
       experience_id = experience["id"].to_s
-      buckets = build_buckets(experience)
-      decision = @bucketing_manager&.bucket_for_visitor(buckets, visitor_id, experience_id: experience_id)
+      decision = fresh_bucketing_decision(visitor_id, experience, experience_id)
       variation_id = decision&.fetch(:variation_id, nil)
       variation = variation_id && retrieve_variation(experience, variation_id)
       if variation.nil?
@@ -578,6 +662,37 @@ module ConvertSdk
       persist_bucketing(visitor_id, experience_id, variation_id, attributes)
       @log_manager&.debug("DataManager#retrieve_bucketing: bucketed exp=#{experience_id} var=#{variation_id}")
       build_bucketed_variation(experience, variation, decision&.fetch(:bucketing_allocation, nil))
+    end
+
+    # qs-01 (bucketing contract v12) anchored-vs-packed GATE. Mirrors the JS
+    # reference's +Number(experience.version) > 11+ (data-manager.ts:695) via
+    # +Float(x, exception: false)+ coercion: a numeric-looking String (e.g.
+    # +"12"+) counts as anchored exactly like the JS oracle, not just a
+    # genuine +Numeric+. Missing / nil / genuinely non-numeric (e.g.
+    # +"twelve"+) / <= 11 all coerce to +nil+ or a value <= 11 and take the
+    # EXISTING packed walk, byte-for-byte unchanged (+build_buckets+ +
+    # +bucket_for_visitor+, both untouched by this story). The anchored branch
+    # is fed the FULL ordered {#variation_list} (inactive arms retained for
+    # anchor stability) — never {#build_buckets}, which drops inactive arms
+    # for the packed walk.
+    #
+    # Hard boundary (documented, not fixable in Ruby): +JSON.parse+ collapses
+    # an explicit JSON +null+ version and an ABSENT version to the same Ruby
+    # +nil+, so this SDK cannot reproduce a JS split between the two (JS:
+    # absent -> +undefined+ -> +Number(undefined)+ is +NaN+ -> packed;
+    # explicit +null+ -> +Number(null)+ is +0+ -> also packed here, so the two
+    # actually agree for this field). Never served in practice regardless.
+    def fresh_bucketing_decision(visitor_id, experience, experience_id)
+      version = Float(experience["version"], exception: false)
+      anchored = !version.nil? && version > 11
+      if anchored
+        @bucketing_manager&.bucket_for_visitor_anchored(
+          variation_list(experience), visitor_id, experience_id: experience_id
+        )
+      else
+        buckets = build_buckets(experience)
+        @bucketing_manager&.bucket_for_visitor(buckets, visitor_id, experience_id: experience_id)
+      end
     end
 
     # True when +experience.id+ is in the archived-experiences list (to_s match).
@@ -653,7 +768,7 @@ module ConvertSdk
     # re-evaluated. +matching_options.audiences == "all"+ requires every checked
     # audience to match; otherwise any match suffices. Returns true/false or a
     # propagated {RuleError} sentinel. Mirrors JS data-manager.ts:350-416.
-    def match_audiences(experience, visitor_properties, is_bucketed)
+    def match_audiences(experience, visitor_properties, is_bucketed, resolver)
       # JS parity (data-manager.ts:356-416): +audiencesMatched+ defaults to FALSE
       # and is only ever set true INSIDE +if (visitorProperties)+. A nil/absent
       # visitor-properties bag therefore GATES the experience (false), even when
@@ -665,7 +780,7 @@ module ConvertSdk
       to_check = audiences_to_check(experience, is_bucketed)
       return true if to_check.empty? # unrestricted (no audiences, or all permanent+bucketed)
 
-      matched = matched_audiences(to_check, visitor_properties)
+      matched = matched_audiences(to_check, visitor_properties, resolver)
       return matched if matched.is_a?(Sentinel)
 
       audiences_verdict?(experience, matched, to_check)
@@ -690,12 +805,17 @@ module ConvertSdk
 
     # Walk each checked audience's rules; collect the matches. A propagated
     # {RuleError} sentinel from any walk short-circuits and is returned as-is.
-    def matched_audiences(to_check, visitor_properties)
+    # qs-04: +resolver+ is threaded unchanged into {RuleManager#is_rule_matched}
+    # — consulted ONLY by a +bucketed_into_experience_key+ leaf; every other
+    # leaf (the 3 generic rule types, AC7) ignores it, byte-identical to before.
+    def matched_audiences(to_check, visitor_properties, resolver)
       matched = [] #: Array[Hash[String, untyped]]
       to_check.each do |audience|
         next unless audience["rules"]
 
-        result = @rule_manager&.is_rule_matched(visitor_properties, audience["rules"], "audience ##{audience["id"]}")
+        result = @rule_manager&.is_rule_matched(
+          visitor_properties, audience["rules"], "audience ##{audience["id"]}", resolver: resolver
+        )
         return result if result.is_a?(Sentinel)
 
         matched << audience if result == true
@@ -781,7 +901,17 @@ module ConvertSdk
     # (atomic merge via DataStoreManager). Optionally also stores visitor
     # properties as segments (JS updateVisitorProperties path). In-memory store
     # ops only (NFR1; user-supplied Redis trades the no-disk contract).
+    #
+    # +attributes[:enable_storage]+ (qs-03 / RB-6 zero-trace) gates this write:
+    # a preview {Context} threads +enable_storage: false+ through
+    # {Context#decision_attributes} for the ENTIRE call (target AND other
+    # experiences), so a fresh decision made while previewing is never
+    # persisted. Absent (or any non-false value) defaults to +true+ — every
+    # existing non-preview caller (including direct {#get_bucketing} unit
+    # calls with a bare +{}+ attributes hash) is unaffected.
     def persist_bucketing(visitor_id, experience_id, variation_id, attributes)
+      return unless attributes.fetch(:enable_storage, true)
+
       manager = @data_store_manager
       return if manager.nil?
 
@@ -840,9 +970,14 @@ module ConvertSdk
 
     # Write the freshly-installed config through to the store, wrapped with a
     # WALL-CLOCK +fetched_at+ for cross-process staleness. A no-op when no store
-    # or key is wired (standalone unit construction). The DataStoreManager
-    # contains any store failure (logged), so this never crashes an install.
+    # or key is wired (standalone unit construction), or when
+    # +config_cache_disabled+ was set at construction (qs-03 — an active
+    # +debug_token+ suppresses the write so a shared store is never poisoned
+    # with a debug-widened config). The DataStoreManager contains any store
+    # failure (logged), so this never crashes an install.
     def cache_config(frozen)
+      return if @config_cache_disabled
+
       store = @data_store_manager
       key = @config_key
       return if store.nil? || key.nil?
@@ -885,6 +1020,14 @@ module ConvertSdk
     # +"key"+ (sparse fixture rows) simply never match. Returns the frozen entity.
     def find_by_key(list, key)
       list.find { |entity| entity.is_a?(Hash) && entity["key"] == key }
+    end
+
+    # Linear scan for the entity whose +"id"+ +to_s+-matches +id+. Mirrors
+    # {#find_by_key}; +to_s+ comparison because ids may arrive as different
+    # types across the wire (JSON Integer vs. a caller-supplied String).
+    def find_by_id(list, entity_id)
+      target = entity_id.to_s
+      list.find { |entity| entity.is_a?(Hash) && entity["id"].to_s == target }
     end
 
     # Build a recursively-frozen copy of +node+. Hashes and arrays are rebuilt

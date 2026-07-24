@@ -65,9 +65,17 @@ module ConvertSdk
     # @param data [Hash{String=>Object}] the key-value data to match.
     # @param rule_set [Hash] the OR/AND/OR_WHEN rule structure.
     # @param log_entry [String, nil] an optional label for the entity being matched.
+    # @param resolver [Proc, nil] qs-04 mutual-exclusion resolver:
+    #   +->(target_experience_key) { true | false | nil }+. Threaded unchanged
+    #   through the whole walk and consulted ONLY by a
+    #   +bucketed_into_experience_key+ leaf ({#process_rule_item}); every other
+    #   leaf ignores it. +nil+ (no resolver injected at all) makes such a leaf
+    #   fall closed to +false+ with negation unapplied; a resolver that itself
+    #   returns +nil+ for an unresolvable target key is treated as
+    #   +bucketed_raw = false+ plus a warning naming the key.
     # @return [Boolean, Sentinel] true/false, or a {RuleError} sentinel propagated
     #   from a leaf.
-    def is_rule_matched(data, rule_set, log_entry = nil)
+    def is_rule_matched(data, rule_set, log_entry = nil, resolver: nil)
       or_groups = nonempty_block(rule_set, "OR")
       unless or_groups
         warn_rule_not_valid("RuleManager#is_rule_matched", log_entry)
@@ -76,7 +84,7 @@ module ConvertSdk
 
       match = false
       or_groups.each do |and_group|
-        match = process_and(data, and_group)
+        match = process_and(data, and_group, resolver)
         return true if match == true
 
         log_outcome("RuleManager#is_rule_matched", match, log_entry)
@@ -90,7 +98,7 @@ module ConvertSdk
 
     # AND block: every OR_WHEN leaf-list must return true. Returns the first
     # non-true result (false or a sentinel short-circuits). rule-manager.ts:191-220.
-    def process_and(data, and_group)
+    def process_and(data, and_group, resolver)
       leaves = nonempty_block(and_group, "AND")
       unless leaves
         warn_rule_not_valid("RuleManager#process_and")
@@ -98,7 +106,7 @@ module ConvertSdk
       end
 
       leaves.each do |or_when|
-        match = process_or_when(data, or_when)
+        match = process_or_when(data, or_when, resolver)
         return match if match != true
       end
       @log_manager&.debug("RuleManager#process_and: AND block matched")
@@ -107,7 +115,7 @@ module ConvertSdk
 
     # OR_WHEN block: the first matching leaf wins. After the loop, returns the
     # last result unless false (so a sentinel propagates). rule-manager.ts:229-255.
-    def process_or_when(data, or_when)
+    def process_or_when(data, or_when, resolver)
       leaves = nonempty_block(or_when, "OR_WHEN")
       unless leaves
         warn_rule_not_valid("RuleManager#process_or_when")
@@ -116,7 +124,7 @@ module ConvertSdk
 
       match = false
       leaves.each do |rule|
-        match = process_rule_item(data, rule)
+        match = process_rule_item(data, rule, resolver)
         return true if match == true
       end
       return match if match != false
@@ -124,11 +132,20 @@ module ConvertSdk
       false
     end
 
-    # A single leaf rule. Validates shape, resolves the operator from the
-    # comparison processor's dispatch map, and evaluates it against the matching
-    # data value — or against {Comparisons::UNDEFINED} for an absent key under an
-    # existence operator. rule-manager.ts:264-365.
-    def process_rule_item(data, rule)
+    # A single leaf rule. A +bucketed_into_experience_key+ leaf (qs-04 mutual
+    # exclusion) is dispatched to {#process_mutual_exclusion_rule} BEFORE the
+    # generic shape validation / comparison-operator dispatch below — it never
+    # consults +match_type+ or +@comparisons+ (vestigial for this rule_type).
+    # Every other leaf takes the unchanged generic path: validates shape,
+    # resolves the operator from the comparison processor's dispatch map, and
+    # evaluates it against the matching data value — or against
+    # {Comparisons::UNDEFINED} for an absent key under an existence operator.
+    # rule-manager.ts:264-365.
+    def process_rule_item(data, rule, resolver)
+      if rule.is_a?(Hash) && rule["rule_type"] == "bucketed_into_experience_key"
+        return process_mutual_exclusion_rule(rule, resolver)
+      end
+
       unless valid_rule?(rule)
         warn_rule_not_valid("RuleManager#process_rule_item")
         return false
@@ -145,6 +162,48 @@ module ConvertSdk
       end
 
       evaluate_leaf(data, rule, match_type, method, negation)
+    end
+
+    # The qs-04 mutual-exclusion leaf (+bucketed_into_experience_key+): resolves
+    # against the injected +resolver+ — a pure +->(target_experience_key) { true
+    # | false | nil }+ function of the target key — never against
+    # +@comparisons+; +match_type+ is vestigial and is never consulted for this
+    # rule_type.
+    #
+    # * No resolver threaded through the call at all (+resolver+ is +nil+):
+    #   fail closed to +false+, negation UNAPPLIED (the capability is entirely
+    #   absent, distinct from "resolver present but target unknown" below).
+    # * Resolver present, target key unresolvable (+resolver.call+ returns
+    #   +nil+): warn naming the unresolved key, treat +bucketed_raw+ as +false+,
+    #   THEN apply negation like any other known outcome.
+    # * Resolver present, target key resolved to +true+/+false+: that is
+    #   +bucketed_raw+; negation applies on top of it as usual.
+    # * +rule["matching"]+ is malformed — a non-Hash, non-+nil+ value (e.g. a
+    #   stray +match_type+ string) OR the +matching+ key missing entirely: this
+    #   leaf skips +valid_rule?+ (unlike the generic path), so the malformed
+    #   shape is guarded here directly. Fails closed to +false+, negation
+    #   UNAPPLIED, and the resolver is NEVER invoked — mirrors the "no resolver
+    #   injected" case's fail-closed spirit for a leaf that cannot be trusted.
+    def process_mutual_exclusion_rule(rule, resolver)
+      return false unless resolver
+
+      matching = rule["matching"]
+      return false unless matching.is_a?(Hash)
+
+      negated = matching["negated"] || false
+      target_key = rule["value"]
+      raw = resolver.call(target_key)
+
+      if raw.nil?
+        @log_manager&.warn(
+          "RuleManager#process_mutual_exclusion_rule: unresolved mutual-exclusion target #{target_key.inspect}"
+        )
+        bucketed_raw = false
+      else
+        bucketed_raw = raw == true
+      end
+
+      negated ? !bucketed_raw : bucketed_raw
     end
 
     # Resolve the data value for the leaf's key and invoke the operator. Iterates

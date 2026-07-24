@@ -95,6 +95,7 @@ class DemoController < ActionController::Base
       pid: Process.pid,
       visitor_id: convert_visitor_id,
       attributes: convert_visitor_attributes,
+      preview: preview_summary,
       experience: variation_summary(variation),
       feature: feature_summary(feature),
       segments: attached_segments,
@@ -103,6 +104,22 @@ class DemoController < ActionController::Base
         amount: purchase_amount,
         transaction_id: transaction_id
       }
+    }
+  end
+
+  # qs-08 preview links — surfaces whether THIS request forced a variation via
+  # `?convert_preview=`, and a note that tracking/persistence are SDK-suppressed
+  # for the rest of this context's lifetime when it did (the "zero-trace"
+  # demonstration; no other decisioning change — the forced variation flows
+  # through the ordinary `run_experience` call above because `set_preview` was
+  # applied to the context before it ran).
+  # @return [Hash]
+  def preview_summary
+    {
+      active: convert_preview_active?,
+      experience_id: convert_preview_experience_id,
+      variation_id: convert_preview_variation_id,
+      note: convert_preview_active? ? "tracking and visitor-state persistence are suppressed on this context" : nil
     }
   end
 

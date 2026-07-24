@@ -78,6 +78,42 @@ module ConvertSdk
     @at_exit_registration_enabled = value
   end
 
+  # Numeric-only segment pattern used to validate both the experience id and
+  # variation id halves of a preview param value (qs-03 AC9).
+  # @api private
+  PREVIEW_PARAM_NUMERIC_ONLY = /\A\d+\z/
+
+  # Parse a preview link param value of the form
+  # +"{experienceId}.{variationId}"+ (mirrors the web tracking script's force
+  # param +_conv_eforce={experienceId}.{variationId}+ and the JS SDK's
+  # +parsePreviewParam+ — javascript-sdk packages/js-sdk/src/parse-preview-param.ts).
+  #
+  # Splits on the FIRST dot only; both segments must be non-empty, numeric-only
+  # strings. Any other shape (missing dot, extra dot, empty segment,
+  # non-numeric segment, non-String input) returns +nil+.
+  #
+  # PURE: never raises, no side effects, no logging. Ruby-specific return
+  # contract (qs-03): a 2-element String array on success, not the JS oracle's
+  # +{experienceId, variationId}+ object shape.
+  #
+  # @param value [Object] expected to be a +String+; anything else returns +nil+.
+  # @return [Array(String, String), nil]
+  def self.parse_preview_param(value)
+    return nil unless value.is_a?(String)
+
+    dot_index = value.index(".")
+    return nil if dot_index.nil?
+    return nil if value.index(".", dot_index + 1)
+
+    experience_id = value[0...dot_index] #: String
+    variation_id = value[(dot_index + 1)..] #: String
+
+    return nil unless PREVIEW_PARAM_NUMERIC_ONLY.match?(experience_id)
+    return nil unless PREVIEW_PARAM_NUMERIC_ONLY.match?(variation_id)
+
+    [experience_id, variation_id]
+  end
+
   # Build an SDK client from an SDK key (live config fetch) or a pre-fetched
   # +data:+ object (direct data mode). THE public entry point.
   #
@@ -199,6 +235,11 @@ module ConvertSdk
   # DataManager is config-read-only). The account/project resolvers are left to
   # the DataManager's own readers (its constructor defaults to +#account_id+ /
   # +#project_id+) — the live config IS the source of those store-key halves here.
+  # +config_cache_disabled+ is derived from +!config.debug_token.nil?+ (qs-03,
+  # Ruby-SDK-only hardening — NOT a JS-parity concern): while a debug token is
+  # configured, the config-cache WRITE is suppressed so a shared store cannot
+  # be poisoned with a debug-widened config that a production reader might
+  # later pick up.
   # @api private
   def self.build_data_manager(config, log_manager, data_store_manager, clock,
                               bucketing_manager, rule_manager)
@@ -211,6 +252,7 @@ module ConvertSdk
       ttl: config.data_refresh_interval,
       bucketing_manager: bucketing_manager,
       rule_manager: rule_manager,
+      config_cache_disabled: !config.debug_token.nil?,
       **clock_option
     )
   end

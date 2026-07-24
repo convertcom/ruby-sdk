@@ -20,13 +20,18 @@ module ConvertSdk
   # * intervals — +data_refresh_interval+ / +flush_interval+ are Numeric or nil
   #   (nil = timer-off); +open_timeout+ / +read_timeout+ are Numeric;
   # * booleans — +keys_case_sensitive+ / +tracking+ (strict true/false);
-  # * log level — must be one of the {LogLevel} values.
+  # * log level — must be one of the {LogLevel} values;
+  # * cache level (qs-02) — must be +nil+ or the String +"low"+;
+  # * debug token (qs-03) — must be +nil+ or a String (no fixed allow-list).
   class ConfigValidator
     # The accepted {LogLevel} integer values (TRACE..SILENT).
     LOG_LEVEL_VALUES = [
       LogLevel::TRACE, LogLevel::DEBUG, LogLevel::INFO,
       LogLevel::WARN, LogLevel::ERROR, LogLevel::SILENT
     ].freeze
+
+    # The accepted +cache_level+ values (qs-02): nil (no-op) or "low".
+    CACHE_LEVEL_VALUES = [nil, "low"].freeze
 
     # @param values [Hash{Symbol=>Object}] the merged option values, keyed by the
     #   public snake_case option names (the {Config::DEFAULTS} keys).
@@ -46,6 +51,7 @@ module ConvertSdk
       validate_intervals!
       validate_booleans!
       validate_log_level!
+      validate_cache_level!
     end
 
     private
@@ -59,7 +65,7 @@ module ConvertSdk
 
     # String-or-nil options, plus the Hash-or-nil data option.
     def validate_strings!
-      %i[sdk_key sdk_key_secret environment config_endpoint track_endpoint negation].each do |name|
+      %i[sdk_key sdk_key_secret environment config_endpoint track_endpoint negation debug_token].each do |name|
         require_string(name, @values[name])
       end
       require_type(:data, @values[:data], Hash) unless @values[:data].nil?
@@ -94,6 +100,16 @@ module ConvertSdk
 
       raise ArgumentError,
             "log_level must be a LogLevel value (#{LOG_LEVEL_VALUES.join(", ")}), got #{level.inspect}"
+    end
+
+    # cache_level (qs-02) must be nil or "low" — the platform's low-cache signal.
+    def validate_cache_level!
+      value = @values[:cache_level]
+      return if CACHE_LEVEL_VALUES.include?(value)
+
+      raise ArgumentError,
+            "cache_level must be nil or \"low\" (#{CACHE_LEVEL_VALUES.map(&:inspect).join(", ")}), " \
+            "got #{value.inspect}"
     end
 
     # Require String-or-nil (nil acceptable for optional strings).

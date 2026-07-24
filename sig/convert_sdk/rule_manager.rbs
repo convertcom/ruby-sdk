@@ -13,16 +13,20 @@ module ConvertSdk
     def initialize: (config: Config, ?comparisons: untyped, ?log_manager: LogManager?) -> void
 
     # Walk a rule set against a data hash; the top OR level. Returns true/false or
-    # a RuleError sentinel propagated from a leaf.
-    def is_rule_matched: (Hash[String, untyped] data, untyped rule_set, ?String? log_entry) -> (bool | Sentinel)
+    # a RuleError sentinel propagated from a leaf. `resolver` is the qs-04
+    # mutual-exclusion resolver (`^(target_experience_key) -> true | false | nil`),
+    # threaded unchanged through the whole walk.
+    def is_rule_matched: (Hash[String, untyped] data, untyped rule_set, ?String? log_entry, ?resolver: ^(untyped) -> bool?) -> (bool | Sentinel)
 
     private
 
-    def process_and: (Hash[String, untyped] data, untyped and_group) -> (bool | Sentinel)
+    def process_and: (Hash[String, untyped] data, untyped and_group, (^(untyped) -> bool?)? resolver) -> (bool | Sentinel)
 
-    def process_or_when: (Hash[String, untyped] data, untyped or_when) -> (bool | Sentinel)
+    def process_or_when: (Hash[String, untyped] data, untyped or_when, (^(untyped) -> bool?)? resolver) -> (bool | Sentinel)
 
-    def process_rule_item: (Hash[String, untyped] data, untyped rule) -> (bool | Sentinel)
+    def process_rule_item: (Hash[String, untyped] data, untyped rule, (^(untyped) -> bool?)? resolver) -> (bool | Sentinel)
+
+    def process_mutual_exclusion_rule: (untyped rule, (^(untyped) -> bool?)? resolver) -> bool
 
     def evaluate_leaf: (Hash[String, untyped] data, untyped rule, String match_type, Symbol method, bool negation) -> (bool | Sentinel)
 

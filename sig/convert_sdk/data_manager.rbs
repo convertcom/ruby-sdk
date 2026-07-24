@@ -16,6 +16,7 @@ module ConvertSdk
     @rule_manager: RuleManager?
     @account_resolver: ^() -> untyped
     @project_resolver: ^() -> untyped
+    @config_cache_disabled: bool
 
     attr_accessor refetch: (^() -> untyped)?
 
@@ -29,7 +30,8 @@ module ConvertSdk
       ?bucketing_manager: BucketingManager?,
       ?rule_manager: RuleManager?,
       ?account_resolver: (^() -> untyped)?,
-      ?project_resolver: (^() -> untyped)?
+      ?project_resolver: (^() -> untyped)?,
+      ?config_cache_disabled: bool
     ) -> void
 
     def install_config: (untyped hash) -> (Symbol | bool)
@@ -62,6 +64,8 @@ module ConvertSdk
 
     def experience_by_key: (String key) -> Hash[String, untyped]?
 
+    def experience_by_id: (String experience_id) -> Hash[String, untyped]?
+
     def feature_by_key: (String key) -> Hash[String, untyped]?
 
     def goal_by_key: (String key) -> Hash[String, untyped]?
@@ -74,6 +78,11 @@ module ConvertSdk
       ?Hash[Symbol, untyped] attributes
     ) -> (BucketedVariation | Sentinel)
 
+    def get_preview_decision: (
+      Hash[String, untyped] experience,
+      String variation_id
+    ) -> BucketedVariation?
+
     def convert: (
       String visitor_id,
       String goal_key,
@@ -82,6 +91,13 @@ module ConvertSdk
     ) -> Hash[String, untyped]?
 
     private
+
+    def assign_collaborators: (
+      BucketingManager? bucketing_manager,
+      RuleManager? rule_manager,
+      (^() -> untyped)? account_resolver,
+      (^() -> untyped)? project_resolver
+    ) -> void
 
     def dedup_and_mark: (String visitor_id, String goal_id, bool force) -> bool
 
@@ -94,6 +110,8 @@ module ConvertSdk
     def goal_data_pairs: (Hash[untyped, untyped]? goal_data) -> Array[Hash[String, untyped]]
 
     def stored_bucketing_map: (String visitor_id) -> Hash[String, untyped]
+
+    def mutual_exclusion_resolver: (String visitor_id) -> (^(untyped target_experience_key) -> bool?)
 
     def match_rules_by_field: (String visitor_id, String experience_key, Hash[Symbol, untyped] attributes) -> (Hash[String, untyped] | Sentinel | nil)
 
@@ -109,6 +127,8 @@ module ConvertSdk
 
     def bucket_fresh: (String visitor_id, Hash[String, untyped] experience, Hash[Symbol, untyped] attributes) -> (BucketedVariation | Sentinel)
 
+    def fresh_bucketing_decision: (String visitor_id, Hash[String, untyped] experience, String experience_id) -> Hash[Symbol, untyped]?
+
     def archived?: (Hash[String, untyped] experience) -> bool
 
     def environment_match?: (Hash[String, untyped] experience, untyped environment) -> bool
@@ -123,11 +143,11 @@ module ConvertSdk
 
     def match_site_area: (untyped location_properties, untyped site_area) -> (bool | Sentinel)
 
-    def match_audiences: (Hash[String, untyped] experience, untyped visitor_properties, bool is_bucketed) -> (bool | Sentinel)
+    def match_audiences: (Hash[String, untyped] experience, untyped visitor_properties, bool is_bucketed, ^(untyped) -> bool? resolver) -> (bool | Sentinel)
 
     def audiences_to_check: (Hash[String, untyped] experience, bool is_bucketed) -> Array[Hash[String, untyped]]
 
-    def matched_audiences: (Array[Hash[String, untyped]] to_check, untyped visitor_properties) -> (Array[Hash[String, untyped]] | Sentinel)
+    def matched_audiences: (Array[Hash[String, untyped]] to_check, untyped visitor_properties, ^(untyped) -> bool? resolver) -> (Array[Hash[String, untyped]] | Sentinel)
 
     def audiences_verdict?: (Hash[String, untyped] experience, Array[Hash[String, untyped]] matched, Array[Hash[String, untyped]] to_check) -> bool
 
@@ -164,6 +184,8 @@ module ConvertSdk
     def collection: (String name) -> Array[untyped]
 
     def find_by_key: (Array[untyped] list, String key) -> Hash[String, untyped]?
+
+    def find_by_id: (Array[untyped] list, untyped entity_id) -> Hash[String, untyped]?
 
     def deep_freeze: (untyped node) -> untyped
   end

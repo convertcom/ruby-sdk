@@ -8,6 +8,21 @@
 <main>
   <h1>Convert Ruby SDK — full-loop demo</h1>
 
+  <section id="preview">
+    <h2>Preview — Context#set_preview (?convert_preview=)</h2>
+    <% preview = @summary[:preview] %>
+    <p id="preview-active"><%= preview[:active] ? "ACTIVE" : "INACTIVE" %></p>
+    <% if preview[:active] %>
+      <dl>
+        <dt>Forced experience id</dt>
+        <dd id="preview-experience-id"><%= preview[:experience_id] %></dd>
+        <dt>Forced variation id</dt>
+        <dd id="preview-variation-id"><%= preview[:variation_id] %></dd>
+      </dl>
+      <p id="preview-note"><%= preview[:note] %></p>
+    <% end %>
+  </section>
+
   <section id="request">
     <h2>Request</h2>
     <dl>
