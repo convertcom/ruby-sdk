@@ -357,9 +357,12 @@ module ConvertSdk
     # {SystemEvents::BUCKETING} event, exactly as {#run_experience}'s forced
     # branch returns before {#fire_bucketing}. Every OTHER decided variation is
     # zero-trace like {#run_experience}'s other-experience branch:
-    # {#decision_attributes} suppresses the sticky persist and the tracking
-    # verdict is forced +false+, while the {SystemEvents::BUCKETING} event still
-    # fires per variation (see {#run_experience}'s doc for the Ruby/JS divergence).
+    # {#decision_attributes} suppresses the sticky persist, the tracking verdict
+    # is forced +false+ so the outbound enqueue is skipped, and
+    # {#fire_bucketing}'s +@preview.nil?+ guard suppresses the
+    # {SystemEvents::BUCKETING} event as well — NO event fires for ANY
+    # experience on a preview-active context (JS parity — +context.ts:260+:
+    # +if (!this._preview) { fire BUCKETING }+).
     #
     # @param attributes [Hash, nil] optional per-call visitor properties merged
     #   over the context attributes (deep-stringified). May carry +:enable_tracking+.
@@ -623,11 +626,16 @@ module ConvertSdk
 
     # {#run_experiences}'s preview branch, extracted to keep #run_experiences
     # within RuboCop's ABC/complexity budget: drop the previewed experience's
-    # normally-decided entry (so it fires no BUCKETING event for the overridden
-    # decision), fire every OTHER experience's event with tracking suppressed,
-    # then append the forced variation. A defensive Sentinel from
-    # {#forced_preview_variation} (set_preview pre-validates, so not expected)
-    # appends nothing.
+    # normally-decided entry (the forced decision replaces it), route every
+    # OTHER experience through {#fire_bucketing} with +track: false+, then
+    # append the forced variation. On a preview-active context that
+    # {#fire_bucketing} call is inert BY DESIGN — its +@preview.nil?+ guard
+    # suppresses the {SystemEvents::BUCKETING} event and +track: false+
+    # suppresses the enqueue, so all it emits is the +debug+ suppression line.
+    # The seam is kept rather than skipped so the zero-trace verdict stays
+    # enforced at the SINGLE bucketing site instead of being duplicated here.
+    # A defensive Sentinel from {#forced_preview_variation} (set_preview
+    # pre-validates, so not expected) appends nothing.
     def force_preview_in_run_all(variations, preview)
       others = variations.reject { |variation| variation.experience_key == preview[:experience_key] }
       others.each { |variation| fire_bucketing(variation.experience_key, variation, track: false) }
