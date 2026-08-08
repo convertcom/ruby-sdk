@@ -202,13 +202,15 @@ Releases are fully automatic. The process:
 
 semantic-release checks the current branch against the `branches` entry in
 `release.config.mjs` (currently `['main']`). On `main`, the dry-run prints the
-next-version plan. On any other branch it exits with:
+next-version plan. On any other branch it stops with:
 
 ```
-This test run was not triggered in a known release branch
+This test run was triggered on the branch <your-branch>, while semantic-release
+is configured to only publish from main, therefore a new version won’t be published.
 ```
 
-That message is **expected** — it confirms the config parses. To exercise a full
+That message is **expected** — it confirms the config parses and every plugin in
+the chain loaded. To exercise a full
 dry-run on a feature branch, temporarily add the branch name to
 `release.config.mjs`'s `branches` array, run the dry-run, then discard the
 temporary edit before committing:
@@ -308,6 +310,6 @@ through:
 | Release ran but published nothing | No release-worthy commit since the last tag (only `chore`/`docs`/`ci`/`test`/`style`/`perf`). | Expected — semantic-release succeeds silently with no version. Land a `feat:`/`fix:` to publish. |
 | `gem push` failed / no RubyGems credential | The RubyGems Trusted Publisher is not registered (or the repo/workflow filename in the registration doesn't match `convertcom/ruby-sdk` ↔ `release.yml`). | Re-check the trusted-publisher entry on rubygems.org (One-Time Setup step 1). The workflow needs `id-token: write` (it has it) and the OIDC exchange step must run before semantic-release. |
 | GitHub Release/tag created but gem missing | Should not happen — publish runs before the Release (publish-before-Release). If you see it, a manual tag was likely pushed out of band. | Do not hand-create `v*` tags. Let the pipeline own tagging. |
-| `yarn release:dry-run` errors "This test run was not triggered in a known release branch" | Expected on any branch except `main`. | To force a full dry-run on a feature branch, temporarily add the branch to `release.config.mjs`'s `branches` array (discard before committing). On `main`, this means the local branch isn't pushed to `origin` — push first. |
+| `yarn release:dry-run` stops with "This test run was triggered on the branch …, while semantic-release is configured to only publish from `main`" | Expected on any branch except `main`. | To force a full dry-run on a feature branch, temporarily add the branch to `release.config.mjs`'s `branches` array (discard before committing). On `main`, this means the local branch isn't pushed to `origin` — push first. |
 | `Cannot find module '<preset>'` from a semantic-release plugin | The yarn node linker isn't producing a `node_modules/` tree the dynamic preset import can walk. | Confirm `.yarnrc.yml` selects the `node-modules` linker and re-run `yarn install --immutable`. |
 | Forbidden release mechanism reintroduced (lint job fails) | A `@semantic-release/git`/`@semantic-release/changelog` plugin, a `rake release` task, `bundler/gem_tasks`, or `rubygems/release-gem` was added. | These are blocked by the release-safety step in the `Lint (RuboCop)` job. Remove the forbidden mechanism — publishing happens only via OIDC `release.yml`. |

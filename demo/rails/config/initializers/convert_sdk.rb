@@ -11,7 +11,7 @@
 # the same client.
 #
 # ── THE FLAGSHIP CLAIM: ZERO FORK-HANDLING CODE ──────────────────────────────
-# There is deliberately NO `postfork`, NO `on_worker_boot { CONVERT_SDK.postfork }`,
+# There is deliberately NO `postfork`, NO `before_worker_boot { CONVERT_SDK.postfork }`,
 # NO fork hook anywhere in this demo. The SDK installs a `Process._fork` hook at
 # require time (ConvertSdk::ForkGuard) that automatically re-arms the client in
 # every forked child on its first use. The belt-and-braces explicit re-arm exists

@@ -49,7 +49,7 @@ documents.
 
 ### The flagship claim: ZERO fork-handling code
 
-There is **no** `postfork`, **no** `on_worker_boot { CONVERT_SDK.postfork }`, no
+There is **no** `postfork`, **no** `before_worker_boot { CONVERT_SDK.postfork }`, no
 fork hook anywhere. The SDK installs a `Process._fork` hook at require time that
 **automatically** re-arms the client in every forked worker on first use. The
 belt-and-braces explicit re-arm exists and is documented in the SDK quickstart,
