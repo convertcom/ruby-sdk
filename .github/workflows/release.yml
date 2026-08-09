@@ -82,15 +82,27 @@ jobs:
           ruby-version: '3.4'
 
       - name: Set up Node LTS (for semantic-release)
+        # semantic-release 25 requires Node ^22.14.0 || >= 24.10.0. `lts/*`
+        # always resolves to the newest Active LTS line, which is at or above
+        # that floor — so the floor is structurally satisfied, not pinned by hand.
         uses: actions/setup-node@v4
         with:
           node-version: 'lts/*'
 
-      - name: Enable corepack (Yarn from the lockfile dialect)
-        # Activates the corepack yarn shim so `yarn install` runs Yarn Berry
-        # (the committed yarn.lock is __metadata version 10). Matches the PHP/
-        # Android SDK release flow. Runs AFTER setup-node so corepack uses the
-        # pinned Node toolchain.
+      - name: Enable corepack (Yarn from the packageManager pin)
+        # Corepack routes `yarn` to the version in package.json's
+        # `packageManager` field. That field is what makes this step work:
+        # WITHOUT it, corepack falls back to its bundled default of Yarn 1.22.x
+        # — verified locally with an isolated COREPACK_HOME — and classic Yarn
+        # cannot read this project's Yarn 4 lockfile AND silently ignores
+        # `--immutable` (its own spelling is `--frozen-lockfile`), so it
+        # re-resolved every dependency from the package.json ranges and
+        # overwrote yarn.lock on each release run. With the pin, CI installs
+        # exactly the tree recorded in yarn.lock — which is what makes the
+        # security-patched resolutions in that lockfile actually reach the
+        # runner — and a drifted lockfile fails the job instead. Matches the
+        # PHP/Android SDK release flow. Runs AFTER setup-node so corepack uses
+        # the pinned Node toolchain.
         run: corepack enable
 
       - name: Install Node release tooling

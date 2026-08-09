@@ -20,7 +20,19 @@ gem "rails", "~> 7.2"
 # Puma in CLUSTER mode is the whole point: config/puma.rb sets `workers 2` +
 # `preload_app!`, the exact production deployment shape that silently loses
 # events in fork-unsafe SDKs. The fork-safety smoke boots THIS Puma.
-gem "puma", "~> 6.0"
+#
+# The `>= 8.0.2` floor is a SECURITY floor, not a style choice: every Puma from
+# 5.5.0 up to (but excluding) 7.2.1, and 8.0.0/8.0.1, mis-parses the PROXY
+# protocol v1 header (GHSA-qpgp-93vx-g8v8 remote memory exhaustion,
+# GHSA-2vqw-3mp8-cgmx repeated-header acceptance — both CVSS 7.5). The advisory
+# names TWO patched versions, 7.2.1 and 8.0.2; we take 8.0.2 because 8.0.0
+# shipped BEFORE 7.2.1, so 7.2.x is a backport branch and pinning there would
+# park the demo off the maintained line. Do not relax either constraint.
+#
+# Puma 8 renamed the lifecycle hooks (on_worker_boot -> before_worker_boot) and
+# changed the DEFAULT bind to IPv6 `::`; neither reaches this demo — it defines
+# no hooks, and config/puma.rb binds explicitly.
+gem "puma", "~> 8.0", ">= 8.0.2"
 
 # NOTE: NO database gem. The demo is API-lean (a couple of controllers); it needs
 # no persistence, so there is no sqlite3/pg/activerecord dependency to slow the

@@ -13,7 +13,7 @@
 # built before fork carries background-thread / buffer state that does not survive
 # `fork(2)`, so forked workers deliver nothing. The Convert SDK's automatic
 # `Process._fork` hook re-arms each worker on first use — which is why there is
-# ZERO fork-handling code below (no `on_worker_boot { CONVERT_SDK.postfork }`).
+# ZERO fork-handling code below (no `before_worker_boot { CONVERT_SDK.postfork }`).
 # The fork-safety smoke (script/fork_smoke.rb) proves events arrive from BOTH
 # forked workers with this file exactly as written.
 
@@ -34,6 +34,7 @@ environment ENV.fetch("RAILS_ENV", "production")
 # this; it does not affect fork safety.
 threads Integer(ENV.fetch("RAILS_MIN_THREADS", 1)), Integer(ENV.fetch("RAILS_MAX_THREADS", 1))
 
-# DELIBERATELY ABSENT: `on_worker_boot { CONVERT_SDK.postfork }`.
+# DELIBERATELY ABSENT: `before_worker_boot { CONVERT_SDK.postfork }` (the hook
+# Puma 7 renamed from `on_worker_boot`).
 # The SDK's automatic fork detection makes it unnecessary. Adding it would
 # undermine the flagship zero-config-fork-safety claim this demo exists to prove.
