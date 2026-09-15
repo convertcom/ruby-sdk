@@ -21,14 +21,16 @@ module ConvertSdk
       String visitor_id,
       String feature_key,
       ?Hash[Symbol, untyped] attributes,
-      ?experiences: Array[String]?
+      ?experiences: Array[String]?,
+      ?type_casting: bool
     ) -> (BucketedFeature | Array[BucketedFeature])
 
     def run_features: (
       String visitor_id,
       ?Hash[Symbol, untyped] attributes,
       ?experiences: Array[String]?,
-      ?features: Array[String]?
+      ?features: Array[String]?,
+      ?type_casting: bool
     ) -> Array[BucketedFeature]
 
     def cast_type: (untyped value, String type) -> untyped
@@ -46,7 +48,8 @@ module ConvertSdk
     def collect_enabled: (
       Array[BucketedVariation] variations,
       Hash[String, untyped] declared_by_id,
-      Array[String]? feature_keys
+      Array[String]? feature_keys,
+      ?type_casting: bool
     ) -> Array[BucketedFeature]
 
     def feature_changes: (BucketedVariation variation) -> Array[untyped]
@@ -55,7 +58,8 @@ module ConvertSdk
       BucketedVariation variation,
       Hash[String, untyped] change,
       Hash[String, untyped] declared_by_id,
-      Array[String]? feature_keys
+      Array[String]? feature_keys,
+      ?type_casting: bool
     ) -> BucketedFeature?
 
     def declared_for_change: (
@@ -65,7 +69,7 @@ module ConvertSdk
 
     def filtered_out?: (Hash[String, untyped] declared, Array[String]? feature_keys) -> bool
 
-    def cast_variables: (Hash[String, untyped] declared, untyped raw) -> Hash[String, untyped]
+    def cast_variables: (Hash[String, untyped] declared, untyped raw, ?type_casting: bool) -> Hash[String, untyped]
 
     def variable_type: (untyped definitions, untyped name) -> untyped
 

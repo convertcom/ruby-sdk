@@ -93,6 +93,8 @@ module ConvertSdk
 
     def experience_keys_for_call: (Hash[untyped, untyped]? attributes) -> Array[String]?
 
+    def type_casting_for_call?: (Hash[untyped, untyped]? attributes) -> bool
+
     def fire_bucketing: (untyped experience_key, BucketedVariation variation, ?track: bool) -> void
 
     def suppress_bucketing_enqueue?: (bool track) -> bool

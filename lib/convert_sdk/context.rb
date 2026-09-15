@@ -57,6 +57,8 @@ module ConvertSdk
                              scope: "honoured on run_experience(s), accepted inert on run_feature(s)" },
       "experience_keys" => { source: :raw_per_call, destination: :experiences,
                              scope: "run_feature(s) only; narrows the experiences decided (CAP-1)" },
+      "type_casting" => { source: :raw_per_call, destination: :type_casting,
+                          scope: "run_feature(s) only; false returns the config-stored variables (CAP-2)" },
       "ruleData" => { source: :raw_per_call, destination: :visitor_properties,
                       scope: "run_custom_segments only; camelCase on a snake_case surface (SD-4)" }
     }.freeze
@@ -429,6 +431,7 @@ module ConvertSdk
     # A per-call +experience_keys+ Array narrows which experiences are decided,
     # and so which sticky assignments the read commits (CAP-1); absent, nil or
     # empty decides every configured experience (D-6).
+    # A per-call +type_casting+ of +false+ returns variables as config stores them (CAP-2).
     #
     # Never raises into the host: an internal failure degrades to a DISABLED
     # {BucketedFeature} (carrying the requested key) + an +error+ log (NFR9).
@@ -443,7 +446,8 @@ module ConvertSdk
 
       @data_manager.ensure_fresh_config!
       manager.run_feature(@visitor_id, key, decision_attributes(attributes),
-                          experiences: experience_keys_for_call(attributes))
+                          experiences: experience_keys_for_call(attributes),
+                          type_casting: type_casting_for_call?(attributes))
     rescue StandardError => e
       @log_manager.error("Context#run_feature: #{e.class}: #{e.message}")
       disabled_feature(key)
@@ -471,7 +475,8 @@ module ConvertSdk
 
       @data_manager.ensure_fresh_config!
       manager.run_features(@visitor_id, decision_attributes(attributes),
-                           experiences: experience_keys_for_call(attributes))
+                           experiences: experience_keys_for_call(attributes),
+                           type_casting: type_casting_for_call?(attributes))
     rescue StandardError => e
       @log_manager.error("Context#run_features: #{e.class}: #{e.message}")
       []
@@ -797,6 +802,16 @@ module ConvertSdk
 
       @log_manager.warn("Context: #{key} must be an Array, got #{value.class} — ignoring it")
       nil
+    end
+
+    # The per-call casting switch (CAP-2): only an explicit +false+ turns it off (D-8).
+    def type_casting_for_call?(attributes)
+      return true unless attributes.is_a?(Hash)
+
+      key = reserved_key_name(:type_casting)&.to_s
+      return true if key.nil?
+
+      attributes.fetch(key.to_sym) { attributes.fetch(key, true) } != false
     end
 
     # The single named seam fired once per fresh/decided variation. It does TWO
