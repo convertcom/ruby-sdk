@@ -48,6 +48,14 @@ RESERVED_CONTEXT_LOCAL_KEYS = [
   { key: "ruleData", value: { "enabled" => true } }
 ].freeze
 
+# CAP-3's negative list, probed as the future edit it exists to survive: each row
+# is ADDED to RESERVED_KEYS as a lifted row, and +envelope+ is what the engine
+# envelope must still show for that key while the caller pushes +value+.
+RESERVED_NOT_LIFTED_PROBES = [
+  { key: "enable_storage", value: false, envelope: true },
+  { key: "update_visitor_properties", value: "caller-value", envelope: nil }
+].freeze
+
 RSpec.describe "Reserved per-call key enumeration (CAP-3)" do
   ReservedKeyVector.constants.each do |const|
     define_method(const.to_s.downcase) { ReservedKeyVector.const_get(const) }
@@ -357,6 +365,40 @@ RSpec.describe "Reserved per-call key enumeration (CAP-3)" do
       build_context(attributes: ReservedKeyVector::MATCHING, api_manager: api_recorder)
         .run_experience(exp_key, "enable_tracking" => false)
       expect(api_recorder).to have_received(:enqueue)
+    end
+
+    # The destination the gained row states, recased to match +payload+'s own keys.
+    def with_destination(payload, into)
+      return into unless payload.is_a?(Hash)
+
+      field = payload.key?(:destination) ? :destination : "destination"
+      payload.merge(field => recase(payload[field], into))
+    end
+
+    # A copy of +enumeration+ that GAINS a +name+ row cloned from +from+'s and routed
+    # to +name+ — derived from the real constant, like #without_row / #renamed.
+    def gaining_row(enumeration, from, name)
+      payload = with_destination(payload_for(enumeration, from), name)
+      return enumeration + [rekey(payload, name)] unless enumeration.is_a?(Hash)
+
+      key = enumeration.keys.find { |k| k.to_s == from }
+      enumeration.merge(recase(key, name) => payload)
+    end
+
+    RESERVED_NOT_LIFTED_PROBES.each do |row|
+      it "keeps a caller's #{row[:key]} out of the envelope even if the enumeration GAINS its row (D-4)" do
+        stub_const("ConvertSdk::Context::RESERVED_KEYS", gaining_row(reserved_keys, "environment", row[:key]))
+        envelope = envelope_for(:run_experience, attributes: plain_attributes,
+                                                 per_call: { row[:key] => row[:value] })
+        expect(envelope[row[:key].to_sym]).to be(row[:envelope])
+      end
+    end
+
+    it "still persists sticky bucketing when a GAINED enable_storage row carries the caller's false (D-4)" do
+      stub_const("ConvertSdk::Context::RESERVED_KEYS", gaining_row(reserved_keys, "environment", "enable_storage"))
+      ctx = build_context(attributes: ReservedKeyVector::MATCHING)
+      ctx.run_experience(exp_key, "enable_storage" => false)
+      expect(ctx.get_visitor_data["bucketing"]).not_to be_empty
     end
   end
 end
