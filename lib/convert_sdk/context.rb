@@ -805,7 +805,7 @@ module ConvertSdk
       value = attributes.fetch(key.to_sym) { attributes.fetch(key, nil) }
       return value if value.nil? || value.is_a?(Array)
 
-      @log_manager.warn("Context: #{key} must be an Array, got #{value.class} — ignoring it")
+      @log_manager.warn("Context#run_feature: #{key} must be an Array, got #{value.class} — ignoring it")
       nil
     end
 
