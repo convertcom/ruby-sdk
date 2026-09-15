@@ -433,12 +433,16 @@ module ConvertSdk
     # empty decides every configured experience (D-6).
     # A per-call +type_casting+ of +false+ returns variables as config stores them (CAP-2).
     #
+    # NOTE (accepted parity break): +type_casting: nil+ leaves casting ON here,
+    # where the JS presence-based rule would disable it (D-8).
+    #
     # Never raises into the host: an internal failure degrades to a DISABLED
     # {BucketedFeature} (carrying the requested key) + an +error+ log (NFR9).
     #
     # @param key [String] the feature +key+ to evaluate.
-    # @param attributes [Hash, nil] optional per-call visitor properties merged
-    #   over the context attributes (deep-stringified).
+    # @param attributes [Hash, nil] optional per-call visitor properties merged over
+    #   the context attributes (deep-stringified). May carry +:experience_keys+
+    #   (CAP-1) and +:type_casting+ (CAP-2); only a boolean +false+ disables casting (D-8).
     # @return [BucketedFeature, Array<BucketedFeature>] the resolved feature(s).
     def run_feature(key, attributes = nil)
       manager = @feature_manager
@@ -466,8 +470,9 @@ module ConvertSdk
     # Never raises into the host: an internal failure degrades to +[]+ + an
     # +error+ log (NFR9).
     #
-    # @param attributes [Hash, nil] optional per-call visitor properties merged
-    #   over the context attributes (deep-stringified).
+    # @param attributes [Hash, nil] optional per-call visitor properties merged over
+    #   the context attributes (deep-stringified). May carry +:experience_keys+
+    #   (CAP-1) and +:type_casting+ (CAP-2); only a boolean +false+ disables casting (D-8).
     # @return [Array<BucketedFeature>] the resolved features (enabled + disabled).
     def run_features(attributes = nil)
       manager = @feature_manager
