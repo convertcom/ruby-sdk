@@ -270,6 +270,26 @@ RSpec.describe "Per-call experience_keys on the feature entry points (CAP-1)" do
     end
   end
 
+  # A prefix collision defends CAP-1's exact-match filter: nothing else in this
+  # file has two experience keys where one is a prefix of the other.
+  describe "prefix-colliding experience keys — exact match only (CAP-1)" do
+    let(:envelope) do
+      { "account_id" => account_id, "project" => { "id" => project_id },
+        "audiences" => [], "segments" => [], "goals" => [],
+        "features" => [build_feature("60001", "feature-exp"), build_feature("60002", "feature-exp-a")],
+        "experiences" => [build_experience("500001", "exp", "60001", "700001"),
+                          build_experience("500002", "exp-a", "60002", "700002")] }
+    end
+
+    it "decides only the exact key, never a key it merely prefixes" do
+      results = build_context.run_features({ experience_keys: ["exp"] })
+
+      expect(results.map(&:key).sort).to eq(%w[feature-exp feature-exp-a])
+      expect(enabled_keys(results)).to eq(["feature-exp"])
+      expect(sticky_experience_ids).to eq(["500001"])
+    end
+  end
+
   describe "preview interaction — suppress-only, never a force" do
     def preview_context
       ctx = build_context
@@ -317,6 +337,19 @@ RSpec.describe "Per-call experience_keys on the feature entry points (CAP-1)" do
       names = rows.map { |row| row.is_a?(Hash) ? (row[:key] || row["key"]) : row }.map(&:to_s)
 
       expect(names).not_to include("features")
+    end
+  end
+
+  # RESERVED_KEYS["experience_keys"][:scope] says "run_feature(s) only" (CAP-1);
+  # this pins that the experience entry points ignore the filter entirely.
+  describe "experience_keys is inert on the experience entry points (CAP-1)" do
+    it "still decides through run_experience/run_experiences despite a narrowing filter" do
+      single = build_context.run_experience(b_key, { experience_keys: [a_key] })
+      expect(single.id).to eq(b_variation)
+
+      all = build_context.run_experiences({ experience_keys: [a_key] })
+      expect(all.map(&:experience_key).sort).to eq([a_key, b_key].sort)
+      expect(sticky_experience_ids).to eq([a_id, b_id].sort)
     end
   end
 end
