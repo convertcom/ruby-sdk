@@ -142,9 +142,9 @@ RSpec.describe "Reserved per-call key enumeration (CAP-3)" do
       rows.map { |row| row.is_a?(Hash) ? (row[:key] || row["key"]) : row }.map(&:to_s).sort
     end
 
-    it "enumerates exactly the four reserved per-call keys (SD-4 includes ruleData)" do
+    it "enumerates exactly the five reserved per-call keys (SD-4 includes ruleData)" do
       expect(key_names(ConvertSdk::Context::RESERVED_KEYS))
-        .to eq(%w[enable_tracking environment location_properties ruleData])
+        .to eq(%w[enable_tracking environment experience_keys location_properties ruleData])
     end
 
     it "lists exactly the two engine-readable keys the seam never lifts (D-5)" do
