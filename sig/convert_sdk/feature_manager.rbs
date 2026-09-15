@@ -20,7 +20,8 @@ module ConvertSdk
     def run_feature: (
       String visitor_id,
       String feature_key,
-      ?Hash[Symbol, untyped] attributes
+      ?Hash[Symbol, untyped] attributes,
+      ?experiences: Array[String]?
     ) -> (BucketedFeature | Array[BucketedFeature])
 
     def run_features: (

@@ -91,6 +91,8 @@ module ConvertSdk
 
     def reserved_key_name: (Symbol destination) -> String?
 
+    def experience_keys_for_call: (Hash[untyped, untyped]? attributes) -> Array[String]?
+
     def fire_bucketing: (untyped experience_key, BucketedVariation variation, ?track: bool) -> void
 
     def suppress_bucketing_enqueue?: (bool track) -> bool

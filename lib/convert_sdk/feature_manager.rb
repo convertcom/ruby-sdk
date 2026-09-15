@@ -84,16 +84,18 @@ module ConvertSdk
     # @param feature_key [String] the feature +key+ to resolve.
     # @param attributes [Hash] bucketing attributes (+:visitor_properties+,
     #   +:location_properties+, +:environment+) — see {DataManager#get_bucketing}.
+    # @param experiences [Array<String>, nil] optional experience-key filter
+    #   narrowing which experiences are decided (CAP-1); nil/empty means all.
     # @return [BucketedFeature, Array<BucketedFeature>] enabled feature(s) or a
     #   frozen DISABLED {BucketedFeature} on a miss.
-    def run_feature(visitor_id, feature_key, attributes = {})
+    def run_feature(visitor_id, feature_key, attributes = {}, experiences: nil)
       declared = @data_manager.feature_by_key(feature_key)
       unless declared
         @log_manager&.debug("FeatureManager#run_feature: feature not declared key=#{feature_key}")
         return disabled_feature(key: feature_key)
       end
 
-      enabled = run_features(visitor_id, attributes, features: [feature_key])
+      enabled = run_features(visitor_id, attributes, experiences: experiences, features: [feature_key])
       if enabled.empty?
         @log_manager&.debug("FeatureManager#run_feature: not bucketed into a carrying variation key=#{feature_key}")
         return disabled_from_declared(declared)
