@@ -37,6 +37,10 @@ RESERVED_SEAM_RESULTS = {
   run_features: []
 }.freeze
 
+# The engine envelope among a seam's arguments, identified by SHAPE: seam arities
+# differ and the feature seams trail a keyword hash, which never carries this key.
+RESERVED_ENGINE_ENVELOPE = ->(arg) { arg.is_a?(Hash) && arg.key?(:visitor_properties) }
+
 RESERVED_ENVELOPE_DESTINATIONS = [
   { key: "location_properties", destination: :location_properties,
     value: { "url" => "https://example.test/cart" } },
@@ -126,7 +130,7 @@ RSpec.describe "Reserved per-call key enumeration (CAP-3)" do
     recorder = instance_double(RESERVED_COLLABORATOR_CLASSES.fetch(collaborator))
     captured = nil
     allow(recorder).to receive(seam) do |*args|
-      captured = args.last
+      captured = args.find(&RESERVED_ENGINE_ENVELOPE)
       RESERVED_SEAM_RESULTS.fetch(seam)
     end
     ctx = build_context(attributes: attributes, **{ collaborator => recorder })
