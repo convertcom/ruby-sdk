@@ -84,16 +84,20 @@ module ConvertSdk
     # @param feature_key [String] the feature +key+ to resolve.
     # @param attributes [Hash] bucketing attributes (+:visitor_properties+,
     #   +:location_properties+, +:environment+) — see {DataManager#get_bucketing}.
+    # @param experiences [Array<String>, nil] optional experience-key filter
+    #   narrowing which experiences are decided (CAP-1); nil/empty means all.
+    # @param type_casting [Boolean] +false+ returns variables as config stores them (CAP-2).
     # @return [BucketedFeature, Array<BucketedFeature>] enabled feature(s) or a
     #   frozen DISABLED {BucketedFeature} on a miss.
-    def run_feature(visitor_id, feature_key, attributes = {})
+    def run_feature(visitor_id, feature_key, attributes = {}, experiences: nil, type_casting: true)
       declared = @data_manager.feature_by_key(feature_key)
       unless declared
         @log_manager&.debug("FeatureManager#run_feature: feature not declared key=#{feature_key}")
         return disabled_feature(key: feature_key)
       end
 
-      enabled = run_features(visitor_id, attributes, features: [feature_key])
+      enabled = run_features(visitor_id, attributes,
+                             experiences: experiences, features: [feature_key], type_casting: type_casting)
       if enabled.empty?
         @log_manager&.debug("FeatureManager#run_feature: not bucketed into a carrying variation key=#{feature_key}")
         return disabled_from_declared(declared)
@@ -119,12 +123,13 @@ module ConvertSdk
     # @param experiences [Array<String>, nil] optional experience-key filter.
     # @param features [Array<String>, nil] optional feature-key filter (suppresses
     #   the DISABLED padding).
+    # @param type_casting [Boolean] +false+ skips the per-variable conversion (CAP-2).
     # @return [Array<BucketedFeature>] the resolved features.
-    def run_features(visitor_id, attributes = {}, experiences: nil, features: nil)
+    def run_features(visitor_id, attributes = {}, experiences: nil, features: nil, type_casting: true)
       declared_by_id = features_by_id
       variations = bucketed_variations(visitor_id, attributes, experiences)
 
-      bucketed = collect_enabled(variations, declared_by_id, features)
+      bucketed = collect_enabled(variations, declared_by_id, features, type_casting: type_casting)
 
       # Pad with DISABLED features ONLY when no feature filter is supplied.
       append_disabled(bucketed, declared_by_id) if features.nil?
@@ -179,11 +184,12 @@ module ConvertSdk
     # Walk every bucketed variation's +fullStackFeature+ changes, mapping each to
     # its declared feature (by id), casting the variables, and building an ENABLED
     # {BucketedFeature}. Honours the optional +feature_keys+ filter.
-    def collect_enabled(variations, declared_by_id, feature_keys)
+    def collect_enabled(variations, declared_by_id, feature_keys, type_casting: true)
       bucketed = [] #: Array[BucketedFeature]
       variations.each do |variation|
         feature_changes(variation).each do |change|
-          feature = enabled_feature_from_change(variation, change, declared_by_id, feature_keys)
+          feature = enabled_feature_from_change(variation, change, declared_by_id, feature_keys,
+                                                type_casting: type_casting)
           bucketed << feature if feature
         end
       end
@@ -208,13 +214,14 @@ module ConvertSdk
 
     # Build the ENABLED {BucketedFeature} for one feature change, or nil when the
     # change has no feature_id, the feature is undeclared, or it is filtered out.
-    def enabled_feature_from_change(variation, change, declared_by_id, feature_keys)
+    def enabled_feature_from_change(variation, change, declared_by_id, feature_keys, type_casting: true)
       data = change["data"]
       declared = declared_for_change(data, declared_by_id)
       return nil if declared.nil?
       return nil if filtered_out?(declared, feature_keys)
 
-      build_enabled(variation, declared, cast_variables(declared, data["variables_data"]))
+      variables = cast_variables(declared, data["variables_data"], type_casting: type_casting)
+      build_enabled(variation, declared, variables)
     end
 
     # The declared feature a feature-change maps to (by data.feature_id), or nil
@@ -239,7 +246,8 @@ module ConvertSdk
     # Cast every supplied raw variable per its declared type (data-driven). A
     # variable with no declared type passes through uncast (JS warns
     # FEATURE_VARIABLES_TYPE_NOT_FOUND). Returns a fresh string-keyed Hash.
-    def cast_variables(declared, raw)
+    # +type_casting+ +false+ skips the conversion only, not the walk or the warn (CAP-2, D-8).
+    def cast_variables(declared, raw, type_casting: true)
       unless raw.is_a?(Hash)
         @log_manager&.warn("FeatureManager#run_features: feature variables not found")
         return {}
@@ -250,7 +258,7 @@ module ConvertSdk
       raw.each do |name, value|
         type = variable_type(definitions, name)
         if type
-          cast[name.to_s] = cast_type(value, type)
+          cast[name.to_s] = type_casting ? cast_type(value, type) : value
         else
           @log_manager&.warn("FeatureManager#run_features: variable type not found name=#{name}")
           cast[name.to_s] = value

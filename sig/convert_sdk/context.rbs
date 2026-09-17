@@ -4,6 +4,9 @@ module ConvertSdk
   # updates, and config/visitor-data lookups (Story 2.8); decisioning methods
   # attach in later stories.
   class Context
+    RESERVED_KEYS: Hash[String, Hash[Symbol, untyped]]
+    NOT_LIFTED: Hash[String, String]
+
     @visitor_id: String
     @data_manager: DataManager
     @data_store_manager: DataStoreManager
@@ -83,6 +86,14 @@ module ConvertSdk
     def disabled_feature: (String key) -> BucketedFeature
 
     def decision_attributes: (Hash[untyped, untyped]? per_call) -> Hash[Symbol, untyped]
+
+    def reserved_rows: (Symbol source) -> Hash[String, Hash[Symbol, untyped]]
+
+    def reserved_key_name: (Symbol destination) -> String?
+
+    def experience_keys_for_call: (Hash[untyped, untyped]? attributes) -> Array[String]?
+
+    def type_casting_for_call?: (Hash[untyped, untyped]? attributes) -> bool
 
     def fire_bucketing: (untyped experience_key, BucketedVariation variation, ?track: bool) -> void
 

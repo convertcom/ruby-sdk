@@ -46,6 +46,29 @@ module ConvertSdk
   # (+nil+ for lookups, +self+ for the chainable mutator). A raising collaborator
   # degrades the call; it never crashes the host request.
   class Context
+    # The reserved keys the public per-call hash accepts (CAP-3): a +:merged_map+ row
+    # lands in the engine envelope at +destination+, a +:raw_per_call+ row in that reader.
+    RESERVED_KEYS = {
+      "location_properties" => { source: :merged_map, destination: :location_properties,
+                                 scope: "every decision entry point" },
+      "environment" => { source: :merged_map, destination: :environment,
+                         scope: "every decision entry point" },
+      "enable_tracking" => { source: :raw_per_call, destination: :tracking_enabled_for_call,
+                             scope: "honoured on run_experience(s), accepted inert on run_feature(s)" },
+      "experience_keys" => { source: :raw_per_call, destination: :experiences,
+                             scope: "run_feature(s) only; narrows the experiences decided (CAP-1)" },
+      "type_casting" => { source: :raw_per_call, destination: :type_casting,
+                          scope: "run_feature(s) only; false returns the config-stored variables (CAP-2)" },
+      "ruleData" => { source: :raw_per_call, destination: :visitor_properties,
+                      scope: "run_custom_segments only; camelCase on a snake_case surface (SD-4)" }
+    }.freeze
+
+    # Engine-readable keys the seam never lifts, each with its reason (CAP-3's negative list).
+    NOT_LIFTED = {
+      "enable_storage" => "preview owns the persistence gate (D-4)",
+      "update_visitor_properties" => "documented Ruby divergence (D-5)"
+    }.freeze
+
     # @param visitor_id [String] the resolved visitor id (validated non-blank by
     #   {Client#create_context} before construction).
     # @param attributes [Hash, nil] the per-visitor attributes; deep-stringified
@@ -405,23 +428,30 @@ module ConvertSdk
     #     render_legacy_checkout
     #   end
     #
-    # NOTE (accepted parity break): JS +runFeature+ accepts an optional
-    # +experienceKeys+ filter argument; this Ruby surface intentionally OMITS it
-    # (deferred feature). Resolution always spans all configured experiences.
+    # A per-call +experience_keys+ Array narrows which experiences are decided,
+    # and so which sticky assignments the read commits (CAP-1); absent, nil or
+    # empty decides every configured experience (D-6).
+    # A per-call +type_casting+ of +false+ returns variables as config stores them (CAP-2).
+    #
+    # NOTE (accepted parity break): +type_casting: nil+ leaves casting ON here,
+    # where the JS presence-based rule would disable it (D-8).
     #
     # Never raises into the host: an internal failure degrades to a DISABLED
     # {BucketedFeature} (carrying the requested key) + an +error+ log (NFR9).
     #
     # @param key [String] the feature +key+ to evaluate.
-    # @param attributes [Hash, nil] optional per-call visitor properties merged
-    #   over the context attributes (deep-stringified).
+    # @param attributes [Hash, nil] optional per-call visitor properties merged over
+    #   the context attributes (deep-stringified). May carry +:experience_keys+
+    #   (CAP-1) and +:type_casting+ (CAP-2); only a boolean +false+ disables casting (D-8).
     # @return [BucketedFeature, Array<BucketedFeature>] the resolved feature(s).
     def run_feature(key, attributes = nil)
       manager = @feature_manager
       return disabled_feature(key) if manager.nil?
 
       @data_manager.ensure_fresh_config!
-      manager.run_feature(@visitor_id, key, decision_attributes(attributes))
+      manager.run_feature(@visitor_id, key, decision_attributes(attributes),
+                          experiences: experience_keys_for_call(attributes),
+                          type_casting: type_casting_for_call?(attributes))
     rescue StandardError => e
       @log_manager.error("Context#run_feature: #{e.class}: #{e.message}")
       disabled_feature(key)
@@ -440,15 +470,18 @@ module ConvertSdk
     # Never raises into the host: an internal failure degrades to +[]+ + an
     # +error+ log (NFR9).
     #
-    # @param attributes [Hash, nil] optional per-call visitor properties merged
-    #   over the context attributes (deep-stringified).
+    # @param attributes [Hash, nil] optional per-call visitor properties merged over
+    #   the context attributes (deep-stringified). May carry +:experience_keys+
+    #   (CAP-1) and +:type_casting+ (CAP-2); only a boolean +false+ disables casting (D-8).
     # @return [Array<BucketedFeature>] the resolved features (enabled + disabled).
     def run_features(attributes = nil)
       manager = @feature_manager
       return [] if manager.nil?
 
       @data_manager.ensure_fresh_config!
-      manager.run_features(@visitor_id, decision_attributes(attributes))
+      manager.run_features(@visitor_id, decision_attributes(attributes),
+                           experiences: experience_keys_for_call(attributes),
+                           type_casting: type_casting_for_call?(attributes))
     rescue StandardError => e
       @log_manager.error("Context#run_features: #{e.class}: #{e.message}")
       []
@@ -714,7 +747,8 @@ module ConvertSdk
     # per-call +ruleData+ (and context attributes) win over stored segments. All
     # deep-stringified to string keys (the rule engine reads string keys).
     def visitor_properties(attributes)
-      rule_data = attributes.is_a?(Hash) ? (attributes[:ruleData] || attributes["ruleData"]) : nil
+      key = reserved_key_name(:visitor_properties)&.to_s
+      rule_data = key && attributes.is_a?(Hash) ? attributes[key.to_sym] || attributes[key] : nil
       empty = {} #: Hash[String, untyped]
       merged = @attributes.merge(deep_stringify(rule_data || empty))
       stored = get_visitor_data["segments"]
@@ -746,12 +780,43 @@ module ConvertSdk
     # byte-identical to the pre-qs-03 behavior.
     def decision_attributes(per_call)
       merged = @attributes.merge(deep_stringify(per_call || {}))
-      {
-        visitor_properties: merged,
-        location_properties: merged["location_properties"],
-        environment: merged["environment"],
-        enable_storage: @preview.nil?
-      }
+      envelope = { visitor_properties: merged } #: Hash[Symbol, untyped]
+      reserved_rows(:merged_map).each { |name, fields| envelope[fields[:destination]] = merged[name.to_s] }
+      envelope[:enable_storage] = @preview.nil?
+      envelope
+    end
+
+    def reserved_rows(source)
+      RESERVED_KEYS.reject { |name, fields| NOT_LIFTED.key?(name.to_s) || fields[:source] != source }
+    end
+
+    # The per-call key name the enumeration routes to +destination+, nil when none does.
+    def reserved_key_name(destination)
+      row = reserved_rows(:raw_per_call).find { |_, fields| fields[:destination] == destination }
+      row&.first
+    end
+
+    # The per-call experience-key filter (CAP-1). A non-Array value degrades to
+    # no filter with a +warn+ (SD-2); nil is absence and never warns.
+    def experience_keys_for_call(attributes)
+      key = reserved_key_name(:experiences)&.to_s
+      return nil unless key && attributes.is_a?(Hash)
+
+      value = attributes.fetch(key.to_sym) { attributes.fetch(key, nil) }
+      return value if value.nil? || value.is_a?(Array)
+
+      @log_manager.warn("Context#run_feature: #{key} must be an Array, got #{value.class} — ignoring it")
+      nil
+    end
+
+    # The per-call casting switch (CAP-2): only an explicit +false+ turns it off (D-8).
+    def type_casting_for_call?(attributes)
+      return true unless attributes.is_a?(Hash)
+
+      key = reserved_key_name(:type_casting)&.to_s
+      return true if key.nil?
+
+      attributes.fetch(key.to_sym) { attributes.fetch(key, true) } != false
     end
 
     # The single named seam fired once per fresh/decided variation. It does TWO
@@ -817,7 +882,10 @@ module ConvertSdk
     def tracking_enabled_for_call?(attributes)
       return true unless attributes.is_a?(Hash)
 
-      value = attributes.fetch(:enable_tracking) { attributes.fetch("enable_tracking", true) }
+      key = reserved_key_name(:tracking_enabled_for_call)&.to_s
+      return true if key.nil?
+
+      value = attributes.fetch(key.to_sym) { attributes.fetch(key, true) }
       value != false
     end
 
