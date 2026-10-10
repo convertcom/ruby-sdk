@@ -75,7 +75,8 @@ module ConvertSdk
     "integrations" => Array[untyped]?,
     "environments" => Array[String]?,
     "environment" => String?,
-    "settings" => { "min_order_value" => Numeric?, "max_order_value" => Numeric?, "outliers" => { "order_value" => untyped?, "products_ordered_count" => untyped? }?, "placeholders" => Array[String]?, "split_url_settings" => { "split_regex_support" => bool? }?, "matching_options" => { "audiences" => String?, "locations" => String? }? }?
+    "settings" => { "min_order_value" => Numeric?, "max_order_value" => Numeric?, "outliers" => { "order_value" => untyped?, "products_ordered_count" => untyped? }?, "placeholders" => Array[String]?, "split_url_settings" => { "split_regex_support" => bool? }?, "matching_options" => { "audiences" => String?, "locations" => String? }? }?,
+    "visitor_insights" => { "heatmap_enabled" => bool?, "signals_enabled" => bool? }?
   }
 
   type experience_variation = {
