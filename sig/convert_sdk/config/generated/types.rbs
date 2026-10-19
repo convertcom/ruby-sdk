@@ -97,6 +97,7 @@ module ConvertSdk
     "id" => String?,
     "name" => String?,
     "key" => String?,
+    "is_guardrail" => bool?,
     "type" => goal_type?,
     "rules" => rule_object?
   }
